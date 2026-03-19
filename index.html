@@ -1,1393 +1,563 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AB Test Quick Metrics</title>
-  <!-- Tableau Extensions API
-       Online/Cloud: loaded from CDN (works in any browser)
-       Desktop:      falls back to the local file in the same folder     -->
-  <script src="https://extensionsgallery.tableau.com/resources/tableau.extensions.1.latest.js"
-          onerror="(function(){var s=document.createElement('script');s.src='tableau.extensions.1.latest.js';document.head.appendChild(s);})()">
-  </script>
-  <style>
-    /* ── Reset ─────────────────────────────────────────── */
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AB Metrics</title>
+<script src="tableau.extensions.1.latest.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  width: 400px; height: 530px; overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, sans-serif;
+  font-size: 12px; color: #1A1A2E; background: #fff;
+}
+.state { display: none; width: 100%; height: 100%; }
+.state.active { display: flex; flex-direction: column; }
 
-    /* ── Base ──────────────────────────────────────────── */
-    html, body {
-      width: 350px;
-      height: 530px;
-      overflow: hidden;
-      background: #f0f4f8;
-      color: #1a2535;
-      font-family: 'Avenir Next', 'Avenir', -apple-system, 'Segoe UI', Helvetica, sans-serif;
-      font-size: 12px;
-      line-height: 1.4;
-      -webkit-font-smoothing: antialiased;
-    }
+#st-loading { align-items: center; justify-content: center; background: #fff; gap: 10px; flex-direction: column; }
+.spinner { width: 28px; height: 28px; border: 2.5px solid #E8E6F0; border-top-color: #D4920A; border-radius: 50%; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-text { font-size: 11px; color: #AAA; }
 
-    #app {
-      display: flex;
-      flex-direction: column;
-      height: 530px;
-      overflow: hidden;
-    }
+#st-empty { align-items: center; justify-content: center; flex-direction: column; gap: 10px; background: #FAFAFA; }
+.empty-arrow { font-size: 22px; color: #CCCCDD; }
+.empty-title { font-size: 12px; font-weight: 600; color: #BBBBCC; }
+.empty-sub { font-size: 10.5px; color: #CCCCDD; text-align: center; line-height: 1.5; }
 
-    /* ── Header ────────────────────────────────────────── */
-    /* Dark navy pulled from the dashboard palette */
-    .hdr {
-      background: #162032;
-      padding: 11px 14px 10px;
-      flex-shrink: 0;
-    }
-    .hdr-test {
-      font-size: 12px;
-      font-weight: 700;
-      color: #ffffff;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      letter-spacing: 0.01em;
-    }
-    .hdr-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-top: 6px;
-    }
-    .hdr-variants {
-      font-size: 10px;
-      color: rgba(255,255,255,0.45);
-      display: flex;
-      align-items: center;
-      gap: 4px;
-    }
-    .hdr-variants .ctrl { color: rgba(255,255,255,0.55); font-weight: 600; }
-    .hdr-variants .arrow { color: rgba(255,255,255,0.25); }
-    .hdr-variants .test { color: #22d8d2; font-weight: 600; }
-    .hdr-right {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .hdr-chips { display: flex; gap: 3px; }
-    .hdr-chip {
-      font-size: 8.5px;
-      font-weight: 700;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-      padding: 2px 5px;
-      border-radius: 3px;
-    }
-    .chip-ios     { background: rgba(59,130,246,0.2);  color: #93c5fd; }
-    .chip-android { background: rgba(74,222,128,0.2);  color: #86efac; }
-    .chip-web     { background: rgba(251,146,60,0.2);  color: #fdba74; }
-    .chip-all     { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.5); }
-    .hdr-n {
-      font-size: 9.5px;
-      color: rgba(255,255,255,0.35);
-    }
-    .hdr-n strong { color: rgba(255,255,255,0.6); font-weight: 600; }
+#st-error { align-items: center; justify-content: center; flex-direction: column; gap: 8px; padding: 20px; }
+.error-icon { font-size: 20px; }
+.error-title { font-size: 12px; font-weight: 600; color: #C0392B; }
+.error-body { font-size: 10px; color: #888; text-align: left; white-space: pre-wrap; line-height: 1.5; max-height: 380px; overflow-y: auto; width: 100%; }
+.btn-retry { margin-top: 6px; padding: 5px 14px; border: 1px solid #D4920A; border-radius: 4px; background: none; color: #D4920A; font-size: 11px; font-weight: 600; cursor: pointer; }
+.btn-retry:hover { background: #FFF8EC; }
 
-    /* ── Tabs (multiple param names) ───────────────────── */
-    .tabs {
-      display: flex;
-      background: #1e2e44;
-      padding: 0 14px;
-      overflow-x: auto;
-      flex-shrink: 0;
-      border-bottom: 1px solid #253548;
-    }
-    .tabs::-webkit-scrollbar { height: 0; }
-    .tab {
-      padding: 6px 10px 5px;
-      font-size: 10px;
-      font-weight: 600;
-      color: rgba(255,255,255,0.35);
-      cursor: pointer;
-      border-bottom: 2px solid transparent;
-      white-space: nowrap;
-      letter-spacing: 0.01em;
-      transition: color 0.12s;
-      user-select: none;
-    }
-    .tab:hover { color: rgba(255,255,255,0.65); }
-    .tab.active { color: #22d8d2; border-bottom-color: #22d8d2; }
+#st-main { overflow: hidden; }
+.hdr { background: #1A1A2E; padding: 11px 14px 9px; flex-shrink: 0; }
+.hdr-test { font-size: 12.5px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hdr-meta { display: flex; gap: 12px; margin-top: 4px; }
+.hdr-group { display: flex; align-items: center; gap: 4px; font-size: 10px; color: rgba(255,255,255,.55); }
+.hdr-group strong { color: rgba(255,255,255,.85); }
+.dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.dot-ctrl { background: rgba(255,255,255,.5); }
+.dot-test { background: #D4920A; }
+.hdr-platforms { font-size: 9.5px; color: rgba(255,255,255,.35); margin-top: 3px; }
 
-    /* ── Scrollable content ────────────────────────────── */
-    .content {
-      flex: 1;
-      overflow-y: auto;
-      overflow-x: hidden;
-      padding: 8px 10px 10px;
-      display: flex;
-      flex-direction: column;
-      gap: 5px;
-    }
-    .content::-webkit-scrollbar { width: 3px; }
-    .content::-webkit-scrollbar-track { background: transparent; }
-    .content::-webkit-scrollbar-thumb { background: #c8d4e0; border-radius: 2px; }
+.cards-area { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 8px 10px 6px; display: flex; flex-direction: column; gap: 6px; }
+.cards-area::-webkit-scrollbar { width: 4px; }
+.cards-area::-webkit-scrollbar-thumb { background: #E0E0EC; border-radius: 2px; }
 
-    /* ── Section divider ───────────────────────────────── */
-    .section-sep {
-      display: flex;
-      align-items: center;
-      gap: 7px;
-      padding: 4px 0 2px;
-    }
-    .section-sep-label {
-      font-size: 9px;
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: #8fa3b8;
-      white-space: nowrap;
-    }
-    .section-sep-line {
-      flex: 1;
-      height: 1px;
-      background: #dce6ef;
-    }
+.section-lbl { font-size: 8.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .09em; color: #BBBBCC; padding: 2px 2px 0; }
 
-    /* ── Alert ─────────────────────────────────────────── */
-    .alert {
-      display: flex;
-      align-items: flex-start;
-      gap: 6px;
-      padding: 6px 9px;
-      border-radius: 5px;
-      background: #fff8ec;
-      border: 1px solid #f5d98a;
-      font-size: 10px;
-      color: #92600a;
-      line-height: 1.45;
-    }
-    .alert-icon { flex-shrink: 0; margin-top: 1px; }
+.card { background: #F7F7FA; border: 1px solid #E8E8F0; border-radius: 5px; padding: 7px 10px 8px; display: grid; grid-template-columns: 108px 1fr 56px; gap: 0 8px; align-items: center; }
+.card-name { font-size: 11px; font-weight: 600; color: #2D2D3A; line-height: 1.2; }
+.card-type { font-size: 9px; color: #AAAABC; margin-top: 1px; }
+.card-bars { display: flex; flex-direction: column; gap: 4px; }
+.bar-row { display: flex; align-items: center; gap: 5px; }
+.bar-lbl { font-size: 9px; font-weight: 700; width: 22px; text-align: right; flex-shrink: 0; }
+.bar-lbl.ctrl { color: #3C3F4A; }
+.bar-lbl.test { color: #C88800; }
+.bar-track { flex: 1; height: 5px; background: #E0E0EA; border-radius: 2px; overflow: hidden; min-width: 0; }
+.bar-fill { height: 100%; border-radius: 2px; transition: width .35s ease; }
+.bar-fill.ctrl-fill { background: #3C3F4A; }
+.bar-fill.test-fill { background: #D4920A; }
+.bar-val { font-size: 9.5px; font-weight: 600; font-variant-numeric: tabular-nums; width: 44px; text-align: right; flex-shrink: 0; }
+.bar-val.ctrl { color: #3C3F4A; }
+.bar-val.test { color: #B87800; }
+.card-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.delta { font-size: 12.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.delta.pos { color: #1A7035; }
+.delta.neg { color: #C0392B; }
+.delta.neu { color: #AAAAAA; }
+.sig-badge { font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 10px; white-space: nowrap; }
+.sig-badge.sig95  { background: #D4EDD9; color: #1A7035; }
+.sig-badge.sig90  { background: #FFF3D4; color: #A06000; }
+.sig-badge.notsig { background: #EFEFEF; color: #AAAAAA; }
+.sig-badge.insuf  { background: #F5F0FF; color: #9080C8; font-size: 8.5px; }
 
-    /* ── Metric Card ───────────────────────────────────── */
-    .card {
-      background: #ffffff;
-      border: 1px solid #dce6ef;
-      border-radius: 7px;
-      padding: 9px 11px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      transition: border-color 0.12s;
-    }
-    /* Left accent stripe by significance */
-    .card.sig  { border-left: 3px solid #22d8d2; }
-    .card.bord { border-left: 3px solid #f59e0b; }
-    .card.ns   { border-left: 3px solid #94a3b8; }
-
-    .card-info { flex: 1; min-width: 0; }
-    .card-name {
-      font-size: 11px;
-      font-weight: 700;
-      color: #1a2535;
-      letter-spacing: 0.01em;
-    }
-    .card-vals {
-      display: flex;
-      align-items: center;
-      gap: 5px;
-      margin-top: 4px;
-    }
-    .card-ctrl {
-      font-size: 10px;
-      color: #8fa3b8;
-      font-variant-numeric: tabular-nums;
-    }
-    .card-arrow {
-      font-size: 9px;
-      color: #c4d0dc;
-    }
-    .card-test {
-      font-size: 10px;
-      font-weight: 600;
-      color: #1a2535;
-      font-variant-numeric: tabular-nums;
-    }
-
-    .card-right {
-      display: flex;
-      flex-direction: column;
-      align-items: flex-end;
-      gap: 4px;
-      flex-shrink: 0;
-    }
-    .card-delta {
-      font-size: 13px;
-      font-weight: 500;
-      line-height: 1;
-      font-variant-numeric: tabular-nums;
-      letter-spacing: -0.01em;
-    }
-    .delta-pos { color: #2a7a72; }   /* muted teal — only used when significant */
-    .delta-neg { color: #b85c58; }   /* muted brick red — only used when significant */
-    .delta-nil { color: #64748b; }
-
-    .sig-badge {
-      font-size: 9px;
-      font-weight: 700;
-      padding: 2px 6px;
-      border-radius: 10px;
-      white-space: nowrap;
-      letter-spacing: 0.01em;
-    }
-    .sig-badge.sig  { background: #e0faf8; color: #0c8c85; }
-    .sig-badge.bord { background: #fef3c7; color: #92600a; }
-    .sig-badge.ns   { background: #e2e8f0; color: #475569; }
-    .sig-badge.na   { background: #edf2f7; color: #b0bec8; }
-
-    /* ── Empty / Loading / Error ───────────────────────── */
-    .state-screen {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-      padding: 28px 24px;
-      text-align: center;
-    }
-    .state-icon { color: #c4d0dc; }
-    .state-title {
-      font-size: 13px;
-      font-weight: 700;
-      color: #8fa3b8;
-    }
-    .state-sub {
-      font-size: 11px;
-      color: #a8bad0;
-      max-width: 220px;
-      line-height: 1.6;
-    }
-    .state-err-title {
-      font-size: 12px;
-      font-weight: 700;
-      color: #dc2626;
-    }
-    .state-err-body {
-      font-size: 10px;
-      color: #8fa3b8;
-      text-align: left;
-      white-space: pre-wrap;
-      max-width: 100%;
-      max-height: 280px;
-      overflow-y: auto;
-      line-height: 1.55;
-    }
-    .spinner {
-      width: 26px; height: 26px;
-      border: 2px solid #dce6ef;
-      border-top-color: #22d8d2;
-      border-radius: 50%;
-      animation: spin 0.65s linear infinite;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    /* ── No data note ──────────────────────────────────── */
-    .no-data {
-      font-size: 10px;
-      color: #a8bad0;
-      text-align: center;
-      padding: 12px 0;
-    }
-
-    /* ── Card hover hint ───────────────────────────────── */
-    .card[data-tip] { cursor: default; }
-    .card[data-tip]:hover { background: #f7fafc; }
-
-    /* ── Tooltip ───────────────────────────────────────── */
-    #tt {
-      position: fixed;
-      z-index: 9999;
-      background: #1a2535;
-      color: #e2e8f0;
-      border-radius: 8px;
-      padding: 10px 13px 9px;
-      font-family: 'Avenir Next', 'Avenir', -apple-system, 'Segoe UI', Helvetica, sans-serif;
-      font-size: 10px;
-      line-height: 1.5;
-      box-shadow: 0 6px 24px rgba(0,0,0,0.32), 0 0 0 1px rgba(255,255,255,0.07);
-      pointer-events: none;
-      max-width: 240px;
-      min-width: 200px;
-      width: max-content;
-      opacity: 0;
-      transform: translateY(5px);
-      transition: opacity 0.13s ease, transform 0.13s ease;
-    }
-    #tt.tt-vis {
-      opacity: 1;
-      transform: translateY(0);
-    }
-    .tt-title {
-      font-weight: 700;
-      font-size: 10.5px;
-      color: #ffffff;
-      margin-bottom: 7px;
-      padding-bottom: 5px;
-      border-bottom: 1px solid rgba(255,255,255,0.1);
-      letter-spacing: 0.01em;
-    }
-    .tt-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      gap: 12px;
-      margin-top: 3px;
-    }
-    .tt-key { color: rgba(255,255,255,0.65); white-space: nowrap; flex-shrink: 0; }
-    .tt-val { font-weight: 600; color: #ffffff; text-align: right; }
-    .tt-val.tv-ok   { color: #22d8d2; }
-    .tt-val.tv-warn { color: #fbbf24; }
-    .tt-val.tv-bad  { color: #fb7185; }
-    .tt-div {
-      margin: 6px 0 4px;
-      border: none;
-      border-top: 1px solid rgba(255,255,255,0.14);
-    }
-    .tt-formula {
-      font-size: 9px;
-      color: rgba(255,255,255,0.52);
-      font-style: italic;
-      margin-top: 1px;
-      line-height: 1.45;
-    }
-  </style>
+.footer { border-top: 1px solid #EEEEF4; background: #FAFAFA; padding: 5px 12px; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
+.footer-note { font-size: 9px; color: #CCCCDD; }
+.footer-legend { display: flex; gap: 6px; align-items: center; }
+.leg { font-size: 8.5px; padding: 1.5px 6px; border-radius: 8px; font-weight: 700; }
+.leg.g  { background: #D4EDD9; color: #1A7035; }
+.leg.a  { background: #FFF3D4; color: #A06000; }
+.leg.gr { background: #EFEFEF; color: #AAAAAA; }
+</style>
 </head>
 <body>
-<div id="app"></div>
-<!-- Floating tooltip – repositioned by JS, hidden by default -->
-<div id="tt" role="tooltip" aria-hidden="true"></div>
+
+<div id="st-loading" class="state active">
+  <div class="spinner"></div>
+  <div class="loading-text">Connecting…</div>
+</div>
+
+<div id="st-empty" class="state">
+  <div class="empty-arrow">↖</div>
+  <div class="empty-title">No test selected</div>
+  <div class="empty-sub">Click a test on the<br>Timeline Tracking chart</div>
+</div>
+
+<div id="st-error" class="state">
+  <div class="error-icon">⚠</div>
+  <div class="error-title">Could not load data</div>
+  <div id="error-msg" class="error-body"></div>
+  <button class="btn-retry" onclick="loadData()">Retry</button>
+</div>
+
+<div id="st-main" class="state">
+  <div class="hdr">
+    <div class="hdr-test" id="hdr-test">—</div>
+    <div class="hdr-meta">
+      <div class="hdr-group"><span class="dot dot-ctrl"></span>Control <strong id="hdr-n-ctrl">—</strong></div>
+      <div class="hdr-group"><span class="dot dot-test"></span>Test <strong id="hdr-n-test">—</strong></div>
+    </div>
+    <div class="hdr-platforms" id="hdr-platforms"></div>
+  </div>
+  <div class="cards-area" id="cards-area"></div>
+  <div class="footer">
+    <div class="footer-note">two-sided · 95% CI</div>
+    <div class="footer-legend">
+      <span class="leg g">95% sig</span>
+      <span class="leg a">90% sig</span>
+      <span class="leg gr">n.s.</span>
+    </div>
+  </div>
+</div>
 
 <script>
 'use strict';
 
-// ──────────────────────────────────────────────────────────
-//  Constants
-// ──────────────────────────────────────────────────────────
-const TIMELINE_WS = 'Timeline Tracking';
-const MIN_SAMPLE_SIZE = 200;
-const P_SIG  = 0.05;
-const P_BORD = 0.10;
+/* ─────────────────────────────────────────────────────────────────
+   CONFIG
+   ───────────────────────────────────────────────────────────────── */
+const WS_NAME = '[extension] key_metrics';
 
-// ──────────────────────────────────────────────────────────
-//  State
-// ──────────────────────────────────────────────────────────
-let STATE = {
-  status:       'empty',   // 'empty' | 'loading' | 'data' | 'error'
-  selectedTest: null,
-  activeTab:    0,
-  data:         null,
-  error:        null,
+// Exact captions as defined in the sheet (Tableau may prefix with AGG())
+const COL = {
+  TEST_NAME:      'Test Name',
+  PARAM_NAME:     'Param Name',
+  PARAM_VALUE:    'Param Value',
+  OS_PLATFORM:    'Os Platform',
+  N_USERS:        '# of users',
+  N_PURCHASES:    '# of purchases',
+  N_SUBS:         '# of purchases (all subs)',
+  REVENUE_7D:     'Revenue 7D TOTAL',
+  N_USERS_FUNNEL: '# of users (funnels)',
+  N_FIRST_CLICKS: '# of first clicks',
+  N_FUNNEL_DONE:  '# of funnel completed',
 };
 
-// ──────────────────────────────────────────────────────────
-//  Render
-// ──────────────────────────────────────────────────────────
-function render() {
-  // Clear tooltip store on each render so stale keys don't linger
-  Object.keys(_tips).forEach(k => delete _tips[k]);
-  _tipSeq = 0;
-  document.getElementById('app').innerHTML = buildApp();
-  bindEvents();
+/* ─────────────────────────────────────────────────────────────────
+   STATE
+   ───────────────────────────────────────────────────────────────── */
+function showState(id) {
+  document.querySelectorAll('.state').forEach(el => el.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+function showError(msg) {
+  document.getElementById('error-msg').textContent = msg;
+  showState('st-error');
 }
 
-function buildApp() {
-  const content = buildContent();
-  return `<div style="display:flex;flex-direction:column;height:530px;overflow:hidden;">${content}</div>`;
-}
-
-function buildContent() {
-  switch (STATE.status) {
-    case 'loading': return buildLoadingState();
-    case 'data':    return buildDataView();
-    case 'error':   return buildErrorState();
-    default:        return buildEmptyState();
-  }
-}
-
-// ── Empty state ──────────────────────────────────────────
-function buildEmptyState() {
-  return `
-    <div class="hdr">
-      <div class="hdr-test" style="color:rgba(255,255,255,0.3);font-weight:500;">No experiment selected</div>
-    </div>
-    <div class="state-screen">
-      <svg class="state-icon" width="38" height="38" viewBox="0 0 38 38" fill="none" stroke="currentColor" stroke-width="1.4">
-        <rect x="4" y="10" width="30" height="22" rx="3"/>
-        <path d="M12 4h14M16 4v6M22 4v6" stroke-linecap="round"/>
-        <path d="M11 20h8M11 26h16" stroke-linecap="round"/>
-      </svg>
-      <div class="state-title">No experiment selected</div>
-      <div class="state-sub">Click a bar on the Timeline Tracking chart to load metrics here</div>
-    </div>`;
-}
-
-// ── Loading state ────────────────────────────────────────
-function buildLoadingState() {
-  return `
-    <div class="hdr">
-      <div class="hdr-test">${escHtml(STATE.selectedTest || 'Loading…')}</div>
-    </div>
-    <div class="state-screen">
-      <div class="spinner"></div>
-      <div class="state-title">Loading metrics</div>
-      <div class="state-sub">${escHtml(STATE.selectedTest || '')}</div>
-    </div>`;
-}
-
-// ── Error state ──────────────────────────────────────────
-function buildErrorState() {
-  return `
-    <div class="hdr">
-      <div class="hdr-test" style="color:rgba(255,255,255,0.4);">Error</div>
-    </div>
-    <div class="state-screen">
-      <svg class="state-icon" width="34" height="34" viewBox="0 0 34 34" fill="none" stroke="#dc2626" stroke-width="1.5">
-        <circle cx="17" cy="17" r="14"/>
-        <path d="M17 10v8M17 24v1" stroke-linecap="round"/>
-      </svg>
-      <div class="state-err-title">Could not load data</div>
-      <div class="state-err-body">${escHtml(STATE.error || 'Unknown error')}</div>
-    </div>`;
-}
-
-// ── Data view ────────────────────────────────────────────
-function buildDataView() {
-  const d = STATE.data;
-  if (!d) return buildEmptyState();
-
-  const paramNames = d.paramNames;
-  const activeTab  = Math.min(STATE.activeTab, paramNames.length - 1);
-  const currentPN  = paramNames[activeTab];
-  const variants   = d.variants[currentPN] || [];
-  const platforms  = d.platforms;
-  const hasWeb     = [...platforms].some(p => p?.toLowerCase() === 'web');
-
-  const controls  = variants.filter(v => v.isControl);
-  const testVars  = variants.filter(v => !v.isControl);
-  const ctrl      = controls[0] || null;
-
-  const minN = variants.reduce((m, v) => Math.min(m, v.users || Infinity), Infinity);
-  const lowSample = isFinite(minN) && minN < MIN_SAMPLE_SIZE;
-
-  // Header chips
-  const chipHtml = [...platforms].filter(Boolean).map(p => {
-    const k = p.toLowerCase();
-    const cls = k === 'ios' ? 'chip-ios' : k === 'android' ? 'chip-android' : k === 'web' ? 'chip-web' : 'chip-all';
-    return `<span class="hdr-chip ${cls}">${escHtml(p)}</span>`;
-  }).join('') || `<span class="hdr-chip chip-all">All</span>`;
-
-  // Variant names for header
-  const ctrlName = ctrl?.paramValue || '—';
-  const testName = testVars[0]?.paramValue || '—';
-  const variantLine = testVars.length > 0
-    ? `<span class="ctrl">${escHtml(ctrlName)}</span>
-       <span class="arrow">→</span>
-       <span class="test">${escHtml(testVars.length === 1 ? testName : testVars.length + ' variants')}</span>`
-    : `<span class="ctrl">${escHtml(ctrlName)}</span>`;
-
-  // Sample size
-  const ctrlN = ctrl ? fmtN(ctrl.users) : '—';
-  const testN = testVars.length === 1 ? fmtN(testVars[0].users) : testVars.length > 1 ? fmtN(testVars.reduce((s,v)=>s+v.users,0)) : '—';
-
-  let html = `
-    <div class="hdr">
-      <div class="hdr-test" title="${escHtml(d.testName)}">${escHtml(d.testName)}</div>
-      <div class="hdr-row">
-        <div class="hdr-variants">${variantLine}</div>
-        <div class="hdr-right">
-          <div class="hdr-chips">${chipHtml}</div>
-          <div class="hdr-n"><strong>${ctrlN}</strong> / <strong>${testN}</strong></div>
-        </div>
-      </div>
-    </div>`;
-
-  // Tabs for multiple param names
-  if (paramNames.length > 1) {
-    const tabsHtml = paramNames.map((pn, i) =>
-      `<div class="tab${i === activeTab ? ' active' : ''}" data-tab="${i}">${escHtml(pn)}</div>`
-    ).join('');
-    html += `<div class="tabs">${tabsHtml}</div>`;
-  }
-
-  html += `<div class="content">`;
-
-  // Alert
-  if (lowSample && isFinite(minN)) {
-    html += `
-      <div class="alert">
-        <svg class="alert-icon" width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-          <path d="M8 2L1 14h14L8 2z" stroke-linejoin="round"/>
-          <path d="M8 7v3.5M8 12.5v.5" stroke-linecap="round"/>
-        </svg>
-        <span>Small sample — min <strong>${minN.toLocaleString()}</strong> users per arm (need ≥${MIN_SAMPLE_SIZE})</span>
-      </div>`;
-  }
-
-  if (!ctrl && testVars.length === 0) {
-    html += `<div class="no-data">No variant data found</div>`;
-  } else if (testVars.length === 0) {
-    html += `<div class="no-data">No test variant found — only control data available</div>`;
-  } else {
-    // Render one test variant at a time (active tab selects which variant if >1)
-    const activeTestVar = testVars[Math.min(STATE.activeTab > 0 ? 0 : 0, testVars.length - 1)];
-
-    // If multiple test variants, render all
-    testVars.forEach((tv, idx) => {
-      if (testVars.length > 1) {
-        html += `
-          <div class="section-sep">
-            <span class="section-sep-label">${escHtml(tv.paramValue)}</span>
-            <div class="section-sep-line"></div>
-          </div>`;
-      }
-      html += buildMetricCards(ctrl, tv, hasWeb);
-    });
-  }
-
-  html += `</div>`;
-  return html;
-}
-
-// ── Build metric cards for one ctrl/test pair ────────────
-function buildMetricCards(ctrl, tv, hasWeb) {
-  let html = '';
-  const c = ctrl || {};
-
-  html += metricCard('Start2Purchase', 'Conversion',
-    c.start2purch, tv.start2purch, tv.pvalues?.start_to_purch, 'pct',
-    makeTipData('proportion',
-      { val: c.start2purch,  n: c.users },
-      { val: tv.start2purch, n: tv.users }
-    )
-  );
-
-  html += metricCard('ARPU 7D', 'Revenue / user',
-    c.arpu, tv.arpu, tv.pvalues?.arpu, 'currency',
-    makeTipData('arpu',
-      { val: c.arpu,  n: c.users,  arps: c.arps,  s2p: c.start2purch },
-      { val: tv.arpu, n: tv.users, arps: tv.arps, s2p: tv.start2purch }
-    )
-  );
-
-  html += metricCard('ARPS 7D', 'Revenue / subscriber',
-    c.arps, tv.arps, tv.pvalues?.arps, 'currency',
-    makeTipData('arps',
-      { val: c.arps,  n: c.users,  s2p: c.start2purch },
-      { val: tv.arps, n: tv.users, s2p: tv.start2purch }
-    )
-  );
-
-  if (hasWeb) {
-    html += `
-      <div class="section-sep">
-        <span class="section-sep-label">Web only</span>
-        <div class="section-sep-line"></div>
-      </div>`;
-    html += metricCard('Join → First Click', null,
-      c.joinToFirstClick, tv.joinToFirstClick, tv.pvalues?.join2firstclick, 'pct',
-      makeTipData('proportion',
-        { val: c.joinToFirstClick,  n: c.users },
-        { val: tv.joinToFirstClick, n: tv.users }
-      )
-    );
-    html += metricCard('Join → Funnel Complete', null,
-      c.joinToFunnelComplete, tv.joinToFunnelComplete, tv.pvalues?.join2funnelcomplete, 'pct',
-      makeTipData('proportion',
-        { val: c.joinToFunnelComplete,  n: c.users },
-        { val: tv.joinToFunnelComplete, n: tv.users }
-      )
-    );
-  }
-
-  return html;
-}
-
-function metricCard(label, sublabel, ctrlVal, testVal, pval, fmt, tipData) {
-  const ctrlFmt = fmt === 'pct' ? fmtPct(ctrlVal) : fmtCurrency(ctrlVal);
-  const testFmt = fmt === 'pct' ? fmtPct(testVal) : fmtCurrency(testVal);
-
-  let delta = null;
-  if (ctrlVal != null && testVal != null && ctrlVal !== 0) {
-    delta = (testVal - ctrlVal) / Math.abs(ctrlVal);
-  }
-
-  const { cls: sigCls, label: sigLabel } = sigInfo(pval);
-  const cardCls = sigCls === 'sig' ? 'sig' : sigCls === 'bord' ? 'bord' : 'ns';
-
-  // Color the delta only when statistically significant (p < 0.05)
-  let deltaCls = 'delta-nil';
-  if (delta !== null && sigCls === 'sig') {
-    deltaCls = delta > 0.001 ? 'delta-pos' : delta < -0.001 ? 'delta-neg' : 'delta-nil';
-  }
-
-  const deltaHtml = delta === null
-    ? `<span class="card-delta delta-nil">—</span>`
-    : `<span class="card-delta ${deltaCls}">${delta >= 0 ? '+' : ''}${(delta * 100).toFixed(1)}%</span>`;
-
-  // Register tooltip if data was provided
-  let tipAttr = '';
-  if (tipData) {
-    const key = 'tip' + (++_tipSeq);
-    _tips[key] = tipData;
-    tipAttr = ` data-tip="${key}"`;
-  }
-
-  return `
-    <div class="card ${cardCls}"${tipAttr}>
-      <div class="card-info">
-        <div class="card-name">${escHtml(label)}</div>
-        <div class="card-vals">
-          <span class="card-ctrl">${ctrlFmt}</span>
-          <span class="card-arrow">→</span>
-          <span class="card-test">${testFmt}</span>
-        </div>
-      </div>
-      <div class="card-right">
-        ${deltaHtml}
-        <span class="sig-badge ${sigCls}">${sigLabel}</span>
-      </div>
-    </div>`;
-}
-
-function sigInfo(pval) {
-  if (pval === null || pval === undefined) return { cls: 'na', label: '—' };
-  const p = parseFloat(pval);
-  if (isNaN(p)) return { cls: 'na', label: '—' };
-  if (p < P_SIG)  return { cls: 'sig',  label: `Significant · p=${p.toFixed(3)}` };
-  if (p < P_BORD) return { cls: 'bord', label: `Borderline · p=${p.toFixed(3)}` };
-  return { cls: 'ns', label: `Not significant · p=${p.toFixed(2)}` };
-}
-
-// ──────────────────────────────────────────────────────────
-//  Tooltip store  (reset on each render, keyed by card id)
-// ──────────────────────────────────────────────────────────
-const _tips = {};
-let   _tipSeq = 0;
-
-// ctrl / test shape: { val, n, arps?, s2p? }
-function makeTipData(type, ctrl, test) {
-  return { type, ctrl: ctrl || {}, test: test || {} };
-}
-
-function buildTipHtml(td) {
-  const { type, ctrl: c, test: t } = td;
-  let testName, formula, rows = '';
-
-  // ── Choose test metadata ────────────────────────────
-  if (type === 'proportion') {
-    testName = 'Two-proportion z-test';
-    formula  = 'SE = √(p_c·(1−p_c)/n_c + p_t·(1−p_t)/n_t)';
-  } else if (type === 'arpu') {
-    testName = 'ARPU z-test  (point-mass variance)';
-    formula  = 'Var(ARPU) ≈ ARPS² · p · (1−p)';
-  } else {
-    testName = 'ARPS z-test  (CV ≈ 1)';
-    formula  = 'SE = √(ARPS_c²/n_subs_c + ARPS_t²/n_subs_t)';
-  }
-
-  // ── Alpha / power row ───────────────────────────────
-  rows += row('α / power', '0.05 / 80%');
-
-  // ── Observed delta row ──────────────────────────────
-  let deltaStr = '—';
-  if (c.val != null && t.val != null) {
-    const raw = t.val - c.val;
-    if (type === 'proportion') {
-      deltaStr = `${raw >= 0 ? '+' : ''}${(raw * 100).toFixed(2)} pp`;
-    } else {
-      deltaStr = `${raw >= 0 ? '+' : '−'}$${Math.abs(raw).toFixed(3)}`;
-    }
-  }
-  rows += row('Observed Δ', deltaStr);
-
-  // ── Required n ─────────────────────────────────────
-  if (type === 'proportion') {
-    const req = reqNProportion(c.val, t.val);
-    rows += sampleRow(req, c.n, 'Required n', 'Current n');
-
-  } else if (type === 'arpu') {
-    const req = reqNArpu(c.val, t.val, c.arps, t.arps, c.s2p, t.s2p);
-    rows += sampleRow(req, c.n, 'Required n', 'Current n');
-
-  } else {
-    // ARPS — show subscriber and user counts separately
-    const r = reqNArps(c.val, t.val, c.s2p, t.s2p);
-    if (r) {
-      const ctrlSubs = (c.n && c.s2p) ? Math.round(c.n * c.s2p) : null;
-      rows += sampleRow(r.nSubs, ctrlSubs, 'Required (subs)', 'Current (subs)');
-      if (r.nUsers) {
-        rows += sampleRow(r.nUsers, c.n, 'Required (users)', 'Current (users)');
-      }
-    } else {
-      rows += row('Required n', '—');
-    }
-  }
-
-  return `
-    <div class="tt-title">${escHtml(testName)}</div>
-    ${rows}
-    <hr class="tt-div">
-    <div class="tt-formula">${escHtml(formula)}</div>`;
-}
-
-// Helper: a key/value row
-function row(k, v, cls) {
-  const c = cls ? ` class="${cls}"` : '';
-  return `<div class="tt-row"><span class="tt-key">${escHtml(k)}</span><span class="tt-val${cls ? ' '+cls : ''}">${v}</span></div>`;
-}
-
-// Helper: required vs current n row pair with traffic-light colouring
-function sampleRow(req, cur, reqLabel, curLabel) {
-  if (!req) return row(reqLabel, '—') + row(curLabel, cur ? fmtN(cur) + ' / arm' : '—');
-  const pct   = cur ? cur / req : 0;
-  const rCls  = pct >= 1 ? 'tv-ok' : pct >= 0.75 ? 'tv-warn' : 'tv-bad';
-  const reqHtml = `<span class="tt-val ${rCls}">${fmtN(req)} / arm</span>`;
-  const curHtml = `<span class="tt-val">${cur ? fmtN(cur) + ' / arm' : '—'}</span>`;
-  return `<div class="tt-row"><span class="tt-key">${escHtml(reqLabel)}</span>${reqHtml}</div>` +
-         `<div class="tt-row"><span class="tt-key">${escHtml(curLabel)}</span>${curHtml}</div>`;
-}
-
-// ── Tooltip positioning ──────────────────────────────────
-function positionTooltip(cardEl, ttEl) {
-  const cr  = cardEl.getBoundingClientRect();
-  const ttH = ttEl.offsetHeight || 130;
-  const ttW = ttEl.offsetWidth  || 220;
-  const vpW = window.innerWidth;
-  const vpH = window.innerHeight;
-  const GAP = 7;
-
-  // Prefer above the card; fall back to below if not enough room
-  let top  = cr.top - ttH - GAP;
-  let left = cr.left + (cr.width - ttW) / 2;
-  if (top < 4) top = cr.bottom + GAP;
-
-  // Clamp to viewport
-  left = Math.max(4, Math.min(left, vpW - ttW - 4));
-  top  = Math.max(4, Math.min(top,  vpH - ttH - 4));
-
-  ttEl.style.left = left + 'px';
-  ttEl.style.top  = top  + 'px';
-}
-
-// ──────────────────────────────────────────────────────────
-//  Event binding
-// ──────────────────────────────────────────────────────────
-function bindEvents() {
-  document.querySelectorAll('.tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-      STATE.activeTab = parseInt(tab.dataset.tab);
-      render();
-    });
-  });
-
-  // ── Tooltip events ─────────────────────────────────
-  const ttEl = document.getElementById('tt');
-  document.querySelectorAll('.card[data-tip]').forEach(card => {
-    card.addEventListener('mouseenter', () => {
-      const td = _tips[card.dataset.tip];
-      if (!td) return;
-      ttEl.innerHTML = buildTipHtml(td);
-      positionTooltip(card, ttEl);
-      ttEl.setAttribute('aria-hidden', 'false');
-      ttEl.classList.add('tt-vis');
-    });
-    card.addEventListener('mouseleave', () => {
-      ttEl.classList.remove('tt-vis');
-      ttEl.setAttribute('aria-hidden', 'true');
-    });
-    card.addEventListener('mousemove', () => positionTooltip(card, ttEl));
-  });
-}
-
-// ──────────────────────────────────────────────────────────
-//  Format helpers
-// ──────────────────────────────────────────────────────────
-function fmtPct(v) {
-  if (v === null || v === undefined || isNaN(v)) return '—';
-  return (v * 100).toFixed(1) + '%';
-}
-function fmtCurrency(v) {
-  if (v === null || v === undefined || isNaN(v)) return '—';
-  if (v >= 1000) return '$' + (v / 1000).toFixed(1) + 'k';
-  return '$' + v.toFixed(2);
-}
+/* ─────────────────────────────────────────────────────────────────
+   FORMATTERS
+   ───────────────────────────────────────────────────────────────── */
 function fmtN(n) {
-  if (!n) return '0';
+  if (n == null || isNaN(n)) return '—';
   if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
   if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
   return Math.round(n).toString();
 }
-function escHtml(s) {
-  if (!s) return '';
-  return String(s)
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+function fmtPct(v, d = 2) {
+  if (v == null || isNaN(v)) return '—';
+  return (v * 100).toFixed(d) + '%';
 }
-function findColIdx(columns, names) {
-  for (const name of names) {
-    const idx = columns.findIndex(c =>
-      c.fieldName === name ||
-      (c.fieldName || '').toLowerCase().replace(/[\s_-]/g,'') ===
-        name.toLowerCase().replace(/[\s_-]/g,'')
-    );
-    if (idx !== -1) return idx;
-  }
-  return -1;
+function fmtMoney(v) {
+  if (v == null || isNaN(v)) return '—';
+  return v >= 1 ? '$' + v.toFixed(2) : '$' + v.toFixed(3);
 }
-
-// ──────────────────────────────────────────────────────────
-//  Statistical helpers  (2-proportion z-test + ARPU/ARPS)
-// ──────────────────────────────────────────────────────────
-function normalCDF(z) {
-  const a1=0.319381530, a2=-0.356563782, a3=1.781477937, a4=-1.821255978, a5=1.330274429;
-  const t = 1 / (1 + 0.2316419 * Math.abs(z));
-  const poly = t*(a1+t*(a2+t*(a3+t*(a4+t*a5))));
-  const pdf  = Math.exp(-z*z/2) / Math.sqrt(2*Math.PI);
-  const cdf  = 1 - pdf * poly;
-  return z >= 0 ? cdf : 1 - cdf;
+function fmtDelta(v) {
+  if (v == null || isNaN(v) || !isFinite(v)) return '—';
+  return (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%';
 }
-function zTestProp(p1, n1, p2, n2) {
-  if (!p1||!p2||!n1||!n2||n1<10||n2<10) return null;
-  const pp = (p1*n1 + p2*n2) / (n1+n2);
-  const se = Math.sqrt(pp*(1-pp)*(1/n1+1/n2));
-  if (se === 0) return 1;
-  const z = Math.abs((p1-p2)/se);
-  return 2*(1-normalCDF(z));
-}
-// ARPU z-test: Var(ARPU) ≈ ARPS² × p × (1−p)  (point-mass revenue model)
-function zTestArpu(arpu_c, n_c, arpu_t, n_t, s2p_c, s2p_t, arps_c, arps_t) {
-  if (!n_c||!n_t||n_c<20||n_t<20) return null;
-  if (!arps_c||!arps_t||!s2p_c||!s2p_t) return null;
-  const var_c = arps_c*arps_c * s2p_c*(1-s2p_c);
-  const var_t = arps_t*arps_t * s2p_t*(1-s2p_t);
-  const se = Math.sqrt(var_c/n_c + var_t/n_t);
-  if (!se) return null;
-  return 2*(1-normalCDF(Math.abs((arpu_t-arpu_c)/se)));
-}
-// ARPS z-test: CV≈1 approximation
-function zTestArps(arps_c, nsubs_c, arps_t, nsubs_t) {
-  if (!nsubs_c||!nsubs_t||nsubs_c<10||nsubs_t<10) return null;
-  const se = Math.sqrt(arps_c*arps_c/nsubs_c + arps_t*arps_t/nsubs_t);
-  if (!se) return null;
-  return 2*(1-normalCDF(Math.abs((arps_t-arps_c)/se)));
+function deltaClass(v) {
+  if (v == null || isNaN(v)) return 'neu';
+  return v > 0.0005 ? 'pos' : v < -0.0005 ? 'neg' : 'neu';
 }
 
-// ──────────────────────────────────────────────────────────
-//  Power analysis — required sample size at α=0.05, 80% power
-// ──────────────────────────────────────────────────────────
-//  Power analysis — required sample size at α=0.05, 80% power
-//  Formula: n = (z_α/2 + z_β)² × (σ_c² + σ_t²) / Δ²
-// ──────────────────────────────────────────────────────────
-const _ZA = 1.960;   // z_{α/2} for α=0.05 two-tailed
-const _ZB = 0.842;   // z_β    for 80% power
-const _KP = (_ZA + _ZB) * (_ZA + _ZB); // ≈ 7.849
+/* ─────────────────────────────────────────────────────────────────
+   STATISTICS
+   ───────────────────────────────────────────────────────────────── */
+const Stats = {
+  normalCDF(z) {
+    const a1=0.254829592, a2=-0.284496736, a3=1.421413741,
+          a4=-1.453152027, a5=1.061405429, p=0.3275911;
+    const sign = z < 0 ? -1 : 1, x = Math.abs(z) / Math.SQRT2;
+    const t = 1 / (1 + p * x);
+    const y = 1 - (((((a5*t+a4)*t)+a3)*t+a2)*t+a1)*t*Math.exp(-x*x);
+    return 0.5 * (1 + sign * y);
+  },
+  pFromZ(z) { return 2 * (1 - this.normalCDF(Math.abs(z))); },
 
-// Two-proportion: σ² = p(1−p)
-function reqNProportion(p_c, p_t) {
-  if (p_c == null || p_t == null) return null;
-  const delta = Math.abs(p_t - p_c);
-  if (delta < 1e-7) return null;
-  // unpooled: n_per_arm = K × [p_c(1−p_c) + p_t(1−p_t)] / Δ²
-  return Math.ceil(_KP * (p_c*(1-p_c) + p_t*(1-p_t)) / (delta*delta));
+  // Two-proportion z-test (Start2Purch, Join→Click, Join→Funnel)
+  propTest(n_conv_c, n_c, n_conv_t, n_t) {
+    if (!n_c || !n_t || n_c < 20 || n_t < 20) return null;
+    const p_c = n_conv_c / n_c, p_t = n_conv_t / n_t;
+    const p_pool = (n_conv_c + n_conv_t) / (n_c + n_t);
+    const se = Math.sqrt(p_pool * (1 - p_pool) * (1/n_c + 1/n_t));
+    if (!se) return null;
+    const z = (p_t - p_c) / se;
+    return { pValue: this.pFromZ(z), delta: p_c > 0 ? (p_t - p_c) / p_c : null };
+  },
+
+  // ARPU — delta method: Var(ARPU) ≈ ARPS² × p × (1-p)
+  arpuTest(arpu_c, arpu_t, n_c, n_t, s2p_c, s2p_t, arps_c, arps_t) {
+    if (!n_c || !n_t || n_c < 20 || n_t < 20) return null;
+    if (!arps_c || !arps_t || !s2p_c || !s2p_t) return null;
+    const var_c = arps_c * arps_c * s2p_c * (1 - s2p_c);
+    const var_t = arps_t * arps_t * s2p_t * (1 - s2p_t);
+    const se = Math.sqrt(var_c / n_c + var_t / n_t);
+    if (!se) return null;
+    const z = (arpu_t - arpu_c) / se;
+    return { pValue: this.pFromZ(z), delta: arpu_c > 0 ? (arpu_t - arpu_c) / arpu_c : null };
+  },
+
+  // ARPS — CV = 1 approximation
+  arpsTest(arps_c, arps_t, n_subs_c, n_subs_t) {
+    if (!n_subs_c || !n_subs_t || n_subs_c < 10 || n_subs_t < 10) return { lowN: true };
+    const se = Math.sqrt(arps_c * arps_c / n_subs_c + arps_t * arps_t / n_subs_t);
+    if (!se) return null;
+    const z = (arps_t - arps_c) / se;
+    return { pValue: this.pFromZ(z), delta: arps_c > 0 ? (arps_t - arps_c) / arps_c : null };
+  },
+
+  sigLevel(pValue) {
+    if (pValue == null) return 0;
+    if (pValue < 0.05) return 95;
+    if (pValue < 0.10) return 90;
+    return 0;
+  },
+};
+
+/* ─────────────────────────────────────────────────────────────────
+   COLUMN LOOKUP
+   Tableau wraps aggregated measures in AGG(...) — strip it.
+   ───────────────────────────────────────────────────────────────── */
+function bare(caption) {
+  return (caption || '').trim().replace(/^AGG\(\s*|\s*\)$/gi, '').trim();
 }
 
-// ARPU: Var(ARPU) ≈ ARPS² × p × (1−p)  (point-mass revenue model)
-function reqNArpu(arpu_c, arpu_t, arps_c, arps_t, s2p_c, s2p_t) {
-  if (arpu_c == null || arpu_t == null) return null;
-  if (!arps_c || !arps_t || !s2p_c || !s2p_t) return null;
-  const delta = Math.abs(arpu_t - arpu_c);
-  if (delta < 1e-8) return null;
-  const var_c = arps_c*arps_c * s2p_c*(1-s2p_c);
-  const var_t = arps_t*arps_t * s2p_t*(1-s2p_t);
-  return Math.ceil(_KP * (var_c + var_t) / (delta*delta));
+function buildIndex(columns) {
+  const idx = {};
+  columns.forEach((col, i) => { idx[bare(col.caption)] = i; });
+  return idx;
 }
 
-// ARPS: CV≈1 → Var(ARPS) ≈ ARPS²  (per subscriber)
-// Returns { nSubs, nUsers } — nUsers derived via avg conversion rate
-function reqNArps(arps_c, arps_t, s2p_c, s2p_t) {
-  if (arps_c == null || arps_t == null) return null;
-  const delta = Math.abs(arps_t - arps_c);
-  if (delta < 1e-8) return null;
-  const nSubs  = Math.ceil(_KP * (arps_c*arps_c + arps_t*arps_t) / (delta*delta));
-  const avgS2P = (s2p_c && s2p_t) ? (s2p_c + s2p_t) / 2 : null;
-  const nUsers = avgS2P ? Math.ceil(nSubs / avgS2P) : null;
-  return { nSubs, nUsers };
+function requireCols(idx, names) {
+  const missing = names.filter(n => idx[n] == null);
+  if (!missing.length) return;
+  const available = Object.keys(idx).map(k => `  "${k}"`).join('\n');
+  throw new Error(
+    `Missing columns: ${missing.map(n => `"${n}"`).join(', ')}\n\nAvailable:\n${available}`
+  );
 }
 
-// ──────────────────────────────────────────────────────────
-//  Identify control variant
-// ──────────────────────────────────────────────────────────
-function isControlVariant(paramValue) {
-  if (!paramValue) return false;
-  const v = paramValue.toLowerCase();
-  return v.includes('default') || v.includes('control') || v.includes('false') || v === 'base';
+/* ─────────────────────────────────────────────────────────────────
+   VARIANT ROLE
+   Mirrors the "group color" calculated field in the dashboard.
+   ───────────────────────────────────────────────────────────────── */
+function variantRole(paramValue) {
+  const v = (paramValue || '').toLowerCase();
+  if (v.includes('control') || v.includes('default') || v.includes('false')) return 'ctrl';
+  if (v.includes('test') || v.includes('true') || v.includes('comparison')) return 'test';
+  return null;
 }
 
-// ──────────────────────────────────────────────────────────
-//  Parse getSummaryDataAsync result
-//  Indexed by both fieldName AND bare caption
-// ──────────────────────────────────────────────────────────
-function bareCaption(caption) {
-  return (caption || '').trim().replace(/^AGG\(\s*/i, '').replace(/\s*\)$/, '').trim();
+/* ─────────────────────────────────────────────────────────────────
+   ROW VALUE HELPERS
+   ───────────────────────────────────────────────────────────────── */
+function numAt(row, i) {
+  if (i == null) return 0;
+  const v = row[i]?.value;
+  const n = parseFloat(String(v ?? '').replace(/[^0-9.\-]/g, ''));
+  return isNaN(n) ? 0 : n;
+}
+function strAt(row, i) {
+  return i != null ? String(row[i]?.value ?? '').trim() : '';
 }
 
-function parseTableRows(tableData) {
-  if (!tableData || !tableData.columns || !tableData.data) return [];
-  return tableData.data.map(row => {
-    const obj = {};
-    tableData.columns.forEach((col, i) => {
-      const cell = {
-        raw: row[i]?.nativeValue ?? null,
-        fmt: row[i]?.formattedValue ?? '',
-        val: row[i]?.value ?? null
-      };
-      obj[col.fieldName] = cell;
-      const cap = bareCaption(col.caption || col.fieldName);
-      if (cap && cap !== col.fieldName) obj[cap] = cell;
-    });
-    return obj;
-  });
-}
+/* ─────────────────────────────────────────────────────────────────
+   DATA PARSING
+   The sheet returns one row per (test_name × param_name × param_value
+   × os_platform) with all 7 measures already aggregated by Tableau.
+   We sum raw counts across platforms for the same variant, then
+   derive all display metrics in JS from first principles.
+   ───────────────────────────────────────────────────────────────── */
+function parseData(data) {
+  const cols = data.columns;
+  const rows = data.data;
 
-// ──────────────────────────────────────────────────────────
-//  Build processed data model
-// ──────────────────────────────────────────────────────────
-function processRawData(testName, trackRows, funnelRows, pvalMap) {
-  const varMap = {};
+  console.log('[AB Metrics] Columns (' + cols.length + '):\n' +
+    cols.map((c, i) => `  [${i}] "${bare(c.caption)}"`).join('\n'));
 
-  function ensureVariant(paramName, os, paramValue) {
-    if (!varMap[paramName]) varMap[paramName] = {};
-    const key = `${os}|${paramValue}`;
-    if (!varMap[paramName][key]) {
-      varMap[paramName][key] = {
-        paramValue, os, isControl: isControlVariant(paramValue),
-        users: 0, start2purch: null, arps: null, arpu: null,
-        joinToFirstClick: null, joinToFunnelComplete: null,
-        pvalues: {}
-      };
-    }
-    return varMap[paramName][key];
-  }
+  const idx = buildIndex(cols);
 
-  for (const r of trackRows) {
-    const pn = r['Param Name']?.val || r['Param Name']?.fmt || '';
-    const pv = r['Param Value']?.val || r['Param Value']?.fmt || '';
-    const os = r['Os Platform']?.val || r['Os Platform']?.fmt || '';
-    if (!pn || !pv) continue;
+  requireCols(idx, [
+    COL.PARAM_VALUE, COL.OS_PLATFORM, COL.TEST_NAME, COL.PARAM_NAME,
+    COL.N_USERS, COL.N_PURCHASES, COL.N_SUBS, COL.REVENUE_7D,
+    COL.N_USERS_FUNNEL, COL.N_FIRST_CLICKS, COL.N_FUNNEL_DONE,
+  ]);
 
-    const v = ensureVariant(pn, os, pv);
-    v.users       = parseFloat(r['# of users']?.raw ?? r['# of users']?.fmt ?? 0) || 0;
-    v.start2purch = parseFloat(r['Start2Purch']?.raw) || null;
-    v.arps        = parseFloat(r['ARPS']?.raw) || null;
-    v.arpu        = parseFloat(r['ARPU']?.raw) || null;
-  }
-
-  for (const r of funnelRows) {
-    const pn = r['Param Name']?.val || r['Param Name']?.fmt || '';
-    const pv = r['Param Value']?.val || r['Param Value']?.fmt || '';
-    const os = r['Os Platform']?.val || r['Os Platfrom for filtering Web']?.val || r['Os Platform']?.fmt || '';
-    if (!pn || !pv) continue;
-
-    const v = ensureVariant(pn, os, pv);
-    v.joinToFirstClick     = parseFloat(r['Joined Test to First Click']?.raw) || null;
-    v.joinToFunnelComplete = parseFloat(r['Joined Test to Funnel Completed']?.raw) || null;
-    if (!v.users) {
-      v.users = parseFloat(
-        r['# of users (funnels)']?.raw ??
-        r['# of users']?.raw ??
-        r['# of users (funnels)']?.fmt ??
-        r['# of users']?.fmt ?? 0
-      ) || 0;
-    }
-  }
-
-  // Attach pre-computed p-values from underlying table (if available)
-  for (const [pn, variants] of Object.entries(varMap)) {
-    for (const v of Object.values(variants)) {
-      const os = v.os, pv = v.paramValue;
-      const getPV = m =>
-        pvalMap[`${m}|${pv}|${pn}|${os}`] || pvalMap[`${m}|${pv}|${pn}|`] ||
-        pvalMap[`${m}|${pv}||${os}`]       || pvalMap[`${m}|${pv}||`]       || null;
-      v.pvalues.start_to_purch      = getPV('start_to_purch');
-      v.pvalues.arpu                = getPV('arpu');
-      v.pvalues.arps                = getPV('arps');
-      v.pvalues.join2firstclick     = getPV('join2firstclick');
-      v.pvalues.join2funnelcomplete = getPV('join2funnelcomplete');
-    }
-  }
-
-  // Fallback: compute p-values via z-test when not available from datasource
-  for (const variants of Object.values(varMap)) {
-    const allCtrls = Object.values(variants).filter(v => v.isControl);
-    if (!allCtrls.length) continue;
-
-    for (const v of Object.values(variants)) {
-      if (v.isControl) continue;
-      const sameOsCtrl = allCtrls.find(c => c.os === v.os) || allCtrls[0];
-
-      if (!v.pvalues.start_to_purch && sameOsCtrl.start2purch != null && v.start2purch != null)
-        v.pvalues.start_to_purch = zTestProp(sameOsCtrl.start2purch, sameOsCtrl.users, v.start2purch, v.users);
-
-      if (!v.pvalues.arpu && sameOsCtrl.arpu != null && v.arpu != null)
-        v.pvalues.arpu = zTestArpu(
-          sameOsCtrl.arpu, sameOsCtrl.users, v.arpu, v.users,
-          sameOsCtrl.start2purch, v.start2purch, sameOsCtrl.arps, v.arps
-        );
-
-      if (!v.pvalues.arps && sameOsCtrl.arps != null && v.arps != null) {
-        const ctrlSubs = sameOsCtrl.users && sameOsCtrl.start2purch ? Math.round(sameOsCtrl.users * sameOsCtrl.start2purch) : 0;
-        const testSubs = v.users && v.start2purch ? Math.round(v.users * v.start2purch) : 0;
-        v.pvalues.arps = zTestArps(sameOsCtrl.arps, ctrlSubs, v.arps, testSubs);
-      }
-
-      const webCtrl = allCtrls.find(c => c.joinToFirstClick != null) || sameOsCtrl;
-      if (!v.pvalues.join2firstclick && webCtrl.joinToFirstClick != null && v.joinToFirstClick != null)
-        v.pvalues.join2firstclick = zTestProp(webCtrl.joinToFirstClick, webCtrl.users, v.joinToFirstClick, v.users);
-      const webCtrl2 = allCtrls.find(c => c.joinToFunnelComplete != null) || sameOsCtrl;
-      if (!v.pvalues.join2funnelcomplete && webCtrl2.joinToFunnelComplete != null && v.joinToFunnelComplete != null)
-        v.pvalues.join2funnelcomplete = zTestProp(webCtrl2.joinToFunnelComplete, webCtrl2.users, v.joinToFunnelComplete, v.users);
-    }
-  }
-
+  const groups    = {};  // 'ctrl' | 'test' → aggregated counts
+  const testNames = new Set();
+  const paramNames = new Set();
   const platforms  = new Set();
-  const paramNames = Object.keys(varMap);
-  const result     = { testName, platforms, paramNames, variants: {} };
 
-  for (const [pn, variantsByKey] of Object.entries(varMap)) {
-    const byPV = {};
-    for (const v of Object.values(variantsByKey)) {
-      platforms.add(v.os);
-      if (!byPV[v.paramValue]) {
-        byPV[v.paramValue] = { ...v };
-      } else {
-        byPV[v.paramValue].users += v.users || 0;
-        for (const k of ['start2purch','arps','arpu','joinToFirstClick','joinToFunnelComplete']) {
-          if (byPV[v.paramValue][k] == null) byPV[v.paramValue][k] = v[k];
-        }
-        for (const k of Object.keys(v.pvalues)) {
-          if (byPV[v.paramValue].pvalues[k] == null)
-            byPV[v.paramValue].pvalues[k] = v.pvalues[k];
-          else if (v.pvalues[k] != null && v.pvalues[k] < byPV[v.paramValue].pvalues[k])
-            byPV[v.paramValue].pvalues[k] = v.pvalues[k];
-        }
-      }
-    }
-    result.variants[pn] = Object.values(byPV).sort((a,b) => a.isControl ? -1 : 1);
-  }
+  for (const row of rows) {
+    const paramValue = strAt(row, idx[COL.PARAM_VALUE]);
+    const platform   = strAt(row, idx[COL.OS_PLATFORM]);
+    const testName   = strAt(row, idx[COL.TEST_NAME]);
+    const paramName  = strAt(row, idx[COL.PARAM_NAME]);
+    const role       = variantRole(paramValue);
 
-  // Post-dedup fallback for web funnel metrics
-  for (const variants of Object.values(result.variants)) {
-    const ctrl = variants.find(v => v.isControl);
-    if (!ctrl) continue;
-    for (const tv of variants) {
-      if (tv.isControl) continue;
-      if (!tv.pvalues.join2firstclick && ctrl.joinToFirstClick != null && tv.joinToFirstClick != null)
-        tv.pvalues.join2firstclick = zTestProp(ctrl.joinToFirstClick, ctrl.users, tv.joinToFirstClick, tv.users);
-      if (!tv.pvalues.join2funnelcomplete && ctrl.joinToFunnelComplete != null && tv.joinToFunnelComplete != null)
-        tv.pvalues.join2funnelcomplete = zTestProp(ctrl.joinToFunnelComplete, ctrl.users, tv.joinToFunnelComplete, tv.users);
-    }
-  }
-
-  return result;
-}
-
-// ──────────────────────────────────────────────────────────
-//  P-value extraction from underlying table data
-// ──────────────────────────────────────────────────────────
-function extractPValues(tableData) {
-  const pvalMap = {};
-  if (!tableData?.columns || !tableData?.data) return pvalMap;
-
-  const cols        = tableData.columns;
-  const metricIdx   = findColIdx(cols, ['Metric','metric']);
-  const pValIdx     = findColIdx(cols, ['P Value','p_value','P-value CR','P-value ARPU']);
-  const paramValIdx = findColIdx(cols, ['Param Value','param_value']);
-  const paramNmIdx  = findColIdx(cols, ['Param Name','param_name']);
-  const osIdx       = findColIdx(cols, ['Os Platform','os_platform']);
-
-  if (pValIdx === -1) return pvalMap;
-
-  for (const row of tableData.data) {
-    const metric = row[metricIdx]?.val ?? row[metricIdx]?.value ?? null;
-    const pValRaw = row[pValIdx];
-    const pVal = pValRaw?.nativeValue ?? parseFloat(pValRaw?.formattedValue ?? 'NaN');
-    if (!metric || isNaN(pVal) || pVal >= 10) continue;
-
-    const pv = paramValIdx >= 0 ? (row[paramValIdx]?.val ?? '') : '';
-    const pn = paramNmIdx  >= 0 ? (row[paramNmIdx]?.val  ?? '') : '';
-    const os = osIdx       >= 0 ? (row[osIdx]?.val        ?? '') : '';
-
-    const key = `${metric}|${pv}|${pn}|${os}`;
-    if (!pvalMap[key] || pVal < pvalMap[key]) pvalMap[key] = pVal;
-  }
-  return pvalMap;
-}
-
-// Fetch all variant metrics from the final_ab_dashboard underlying table.
-// This table is wide-format: one row per (param_name, param_value, os_platform)
-// with direct columns for # of users, Start2Purch, ARPS, ARPU.
-// P-values are intentionally NOT read — they are computed via z-tests.
-async function fetchMetricsData(worksheet) {
-  try {
-    const tables = await worksheet.getUnderlyingTablesAsync();
-    console.log('[AB ext] Underlying tables:', tables.map(t => t.caption || t.id).join(', '));
-
-    // Find final_ab_dashboard by name/id
-    const target = tables.find(t =>
-      (t.caption || '').toLowerCase().includes('final_ab_dashboard') ||
-      (t.id     || '').toLowerCase().includes('final_ab_dashboard')
-    );
-
-    if (!target) {
-      console.warn('[AB ext] fetchMetricsData: final_ab_dashboard not found');
-      return {};
+    if (!role) {
+      console.warn(`[AB Metrics] Unrecognised variant "${paramValue}" — skipped`);
+      continue;
     }
 
-    const data = await worksheet.getUnderlyingTableDataAsync(target.id, {
-      maxRows: 50000, ignoreAliases: false, ignoreSelection: false
-    });
-    if (!data?.columns || !data?.data) return {};
+    if (testName)  testNames.add(testName);
+    if (paramName) paramNames.add(paramName);
+    if (platform)  platforms.add(platform);
 
-    console.log('[AB ext] final_ab_dashboard columns:',
-      data.columns.map(c => bareCaption(c.caption || c.fieldName)).join(', '));
-
-    const metricsMap = {};
-    for (const r of parseTableRows(data)) {
-      // Dimension keys — try both capitalised and snake_case forms
-      const pn = r['Param Name']?.val || r['Param Name']?.fmt
-              || r['param_name']?.val  || r['param_name']?.fmt  || '';
-      const pv = r['Param Value']?.val || r['Param Value']?.fmt
-              || r['param_value']?.val  || r['param_value']?.fmt  || '';
-      const os = r['Os Platform']?.val || r['Os Platform']?.fmt
-              || r['os_platform']?.val  || r['os_platform']?.fmt  || '';
-      if (!pn || !pv) continue;
-
-      const key = `${pn}|${pv}|${os}`;
-      if (!metricsMap[key]) metricsMap[key] = {};
-
-      // User count
-      const users = parseFloat(
-        r['# of users']?.raw ?? r['# of users']?.val ??
-        r['num_users']?.raw  ?? r['num_users']?.val  ?? NaN
-      );
-      if (!isNaN(users)) metricsMap[key].users = users;
-
-      // Conversion rate (Start2Purch)
-      const s2p = parseFloat(
-        r['Start2Purch']?.raw   ?? r['Start2Purch']?.val   ??
-        r['start_to_purch']?.raw ?? r['start_to_purch']?.val ?? NaN
-      );
-      if (!isNaN(s2p)) metricsMap[key].start2purch = s2p;
-
-      // ARPS
-      const arps = parseFloat(
-        r['ARPS']?.raw    ?? r['ARPS']?.val    ??
-        r['ARPS 7D']?.raw ?? r['ARPS 7D']?.val ??
-        r['arps']?.raw    ?? r['arps']?.val    ?? NaN
-      );
-      if (!isNaN(arps)) metricsMap[key].arps = arps;
-
-      // ARPU
-      const arpu = parseFloat(
-        r['ARPU']?.raw    ?? r['ARPU']?.val    ??
-        r['ARPU 7D']?.raw ?? r['ARPU 7D']?.val ??
-        r['arpu']?.raw    ?? r['arpu']?.val    ?? NaN
-      );
-      if (!isNaN(arpu)) metricsMap[key].arpu = arpu;
+    if (!groups[role]) {
+      groups[role] = {
+        variant: paramValue,
+        n_users: 0, n_purch: 0, n_subs: 0, rev7d: 0,
+        n_users_funnel: 0, n_first_clicks: 0, n_funnel_done: 0,
+      };
     }
 
-    console.log(`[AB ext] fetchMetricsData: ${Object.keys(metricsMap).length} variant entries`);
-    return metricsMap;
-  } catch (e) {
-    console.warn('[AB ext] fetchMetricsData failed:', e);
-    return {};
+    const g = groups[role];
+    // Sum raw counts across all platform rows for this variant
+    g.n_users        += numAt(row, idx[COL.N_USERS]);
+    g.n_purch        += numAt(row, idx[COL.N_PURCHASES]);
+    g.n_subs         += numAt(row, idx[COL.N_SUBS]);
+    g.rev7d          += numAt(row, idx[COL.REVENUE_7D]);
+    g.n_users_funnel += numAt(row, idx[COL.N_USERS_FUNNEL]);
+    g.n_first_clicks += numAt(row, idx[COL.N_FIRST_CLICKS]);
+    g.n_funnel_done  += numAt(row, idx[COL.N_FUNNEL_DONE]);
   }
-}
 
-// ──────────────────────────────────────────────────────────
-//  Tableau API helpers
-// ──────────────────────────────────────────────────────────
-async function safeGetSummary(worksheet) {
-  try {
-    return await worksheet.getSummaryDataAsync({
-      ignoreSelection: false,
-      maxRows: 0,
-      ignoreAliases: false,
-      includeAllColumns: true
-    });
-  } catch (e) {
-    console.warn(`getSummaryDataAsync failed for "${worksheet.name}":`, e);
+  const ctrl = groups['ctrl'];
+  const test = groups['test'];
+
+  if (!ctrl || !test) {
+    console.warn('[AB Metrics] ctrl/test not identified. Groups:', Object.keys(groups).join(', ') || '(none)');
     return null;
   }
+
+  // Derive display metrics from raw counts
+  for (const g of [ctrl, test]) {
+    g.s2p  = g.n_users > 0 ? g.n_purch / g.n_users : 0;
+    g.arpu = g.n_users > 0 ? g.rev7d   / g.n_users : 0;
+    g.arps = g.n_subs  > 0 ? g.rev7d   / g.n_subs  : 0;
+    g.cr_first_click      = g.n_users_funnel > 0 ? g.n_first_clicks / g.n_users_funnel : 0;
+    g.cr_funnel_completed = g.n_users_funnel > 0 ? g.n_funnel_done  / g.n_users_funnel : 0;
+  }
+
+  const isWeb = [...platforms].some(p => p.toLowerCase().includes('web'));
+
+  // Prefer test_name for display header, fall back to param_name
+  const displayName = testNames.size > 0
+    ? [...testNames].join(', ')
+    : [...paramNames].join(', ');
+
+  console.log('[AB Metrics] ctrl:', ctrl);
+  console.log('[AB Metrics] test:', test);
+  console.log('[AB Metrics] isWeb:', isWeb, '| platforms:', [...platforms]);
+
+  return { ctrl, test, displayName, platforms: [...platforms], isWeb };
 }
 
-// ──────────────────────────────────────────────────────────
-//  Main data load
-// ──────────────────────────────────────────────────────────
+/* ─────────────────────────────────────────────────────────────────
+   RENDERING
+   ───────────────────────────────────────────────────────────────── */
+function barWidths(a, b) {
+  const max = Math.max(a || 0, b || 0, 1e-12);
+  return [(a / max) * 82, (b / max) * 82];
+}
+
+function sigBadge(res) {
+  if (!res) return '<span class="sig-badge notsig">—</span>';
+  if (res.lowN) return '<span class="sig-badge insuf">low n</span>';
+  const lvl = Stats.sigLevel(res.pValue);
+  if (lvl >= 95) return '<span class="sig-badge sig95">95% ✓</span>';
+  if (lvl >= 90) return '<span class="sig-badge sig90">90% ✓</span>';
+  return '<span class="sig-badge notsig">n.s.</span>';
+}
+
+function card(name, type, ctrlV, testV, ctrlFmt, testFmt, res) {
+  const delta = res && !res.lowN ? res.delta : null;
+  const [bwC, bwT] = barWidths(ctrlV, testV);
+  const dc = deltaClass(delta);
+  return `
+<div class="card">
+  <div>
+    <div class="card-name">${name}</div>
+    <div class="card-type">${type}</div>
+  </div>
+  <div class="card-bars">
+    <div class="bar-row">
+      <span class="bar-lbl ctrl">Ctrl</span>
+      <div class="bar-track"><div class="bar-fill ctrl-fill" style="width:${bwC.toFixed(1)}%"></div></div>
+      <span class="bar-val ctrl">${ctrlFmt}</span>
+    </div>
+    <div class="bar-row">
+      <span class="bar-lbl test">Test</span>
+      <div class="bar-track"><div class="bar-fill test-fill" style="width:${bwT.toFixed(1)}%"></div></div>
+      <span class="bar-val test">${testFmt}</span>
+    </div>
+  </div>
+  <div class="card-right">
+    <span class="delta ${dc}">${fmtDelta(delta)}</span>
+    ${sigBadge(res)}
+  </div>
+</div>`;
+}
+
+function render(d) {
+  const c = d.ctrl, t = d.test;
+
+  document.getElementById('hdr-test').textContent    = d.displayName || '—';
+  document.getElementById('hdr-n-ctrl').textContent  = fmtN(c.n_users) + ' users';
+  document.getElementById('hdr-n-test').textContent  = fmtN(t.n_users) + ' users';
+  document.getElementById('hdr-platforms').textContent =
+    d.platforms.filter(Boolean).sort().join(' · ');
+
+  // Statistical tests — all working from raw counts, no pre-computed rates
+  const res_s2p  = Stats.propTest(c.n_purch, c.n_users, t.n_purch, t.n_users);
+  const res_arpu = Stats.arpuTest(c.arpu, t.arpu, c.n_users, t.n_users,
+                                  c.s2p, t.s2p, c.arps, t.arps);
+  const res_arps = Stats.arpsTest(c.arps, t.arps, c.n_subs, t.n_subs);
+
+  let html = '<div class="section-lbl">Main Metrics</div>';
+  html += card('Start2Purchase', 'Conversion rate',
+    c.s2p,  t.s2p,  fmtPct(c.s2p),    fmtPct(t.s2p),    res_s2p);
+  html += card('ARPU 7D', 'Revenue / user',
+    c.arpu, t.arpu, fmtMoney(c.arpu),  fmtMoney(t.arpu), res_arpu);
+  html += card('ARPS 7D', 'Revenue / subscriber',
+    c.arps, t.arps, fmtMoney(c.arps),  fmtMoney(t.arps), res_arps);
+
+  if (d.isWeb) {
+    const res_fc = Stats.propTest(
+      c.n_first_clicks, c.n_users_funnel,
+      t.n_first_clicks, t.n_users_funnel
+    );
+    const res_fcomp = Stats.propTest(
+      c.n_funnel_done, c.n_users_funnel,
+      t.n_funnel_done, t.n_users_funnel
+    );
+
+    html += '<div class="section-lbl" style="margin-top:4px">Web Funnel</div>';
+    html += card('Join → First Click', 'Funnel CR',
+      c.cr_first_click,      t.cr_first_click,
+      fmtPct(c.cr_first_click), fmtPct(t.cr_first_click), res_fc);
+    html += card('Join → Funnel Done', 'Funnel CR',
+      c.cr_funnel_completed,      t.cr_funnel_completed,
+      fmtPct(c.cr_funnel_completed), fmtPct(t.cr_funnel_completed), res_fcomp);
+  }
+
+  document.getElementById('cards-area').innerHTML = html;
+  showState('st-main');
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   DATA LOAD
+   ───────────────────────────────────────────────────────────────── */
 let _loading = false;
-let _loadDebounce = null;
-
-function scheduleLoad() {
-  clearTimeout(_loadDebounce);
-  _loadDebounce = setTimeout(() => { if (!_loading) loadData(); }, 200);
-}
 
 async function loadData() {
   if (_loading) return;
   _loading = true;
+  showState('st-loading');
 
   try {
-    const dash    = tableau.extensions.dashboardContent.dashboard;
-    const trackWs = dash.worksheets.find(w => w.name === TIMELINE_WS);
+    const dash = tableau.extensions.dashboardContent.dashboard;
+    const ws   = dash.worksheets.find(w => w.name === WS_NAME);
 
-    if (!trackWs) {
-      throw new Error(`Worksheet "${TIMELINE_WS}" not found.\nAvailable: ${dash.worksheets.map(w=>w.name).join(', ')}`);
+    if (!ws) {
+      const names = dash.worksheets.map(w => w.name).join('\n  ');
+      throw new Error(
+        `Sheet "${WS_NAME}" not found on this dashboard.\n\nSheets present:\n  ${names}`
+      );
     }
 
-    // ── Step 1: detect selected test ─────────────────────────────────────
-    // Timeline Tracking is a target of its own action filter, so
-    // getSummaryDataAsync reflects the active filter once it fires.
-    // Count distinct Test Names: exactly 1 = a specific test is selected.
-    const trackData = await safeGetSummary(trackWs);
-    const trackRows = trackData ? parseTableRows(trackData) : [];
+    const data = await ws.getSummaryDataAsync({
+      maxRows: 0,
+      ignoreAliases: false,
+      ignoreSelection: false,   // respect Timeline Tracking action filter
+      includeAllColumns: true,
+    });
 
-    console.log(`[AB ext] Timeline Tracking rows: ${trackRows.length}`);
-    if (trackData?.columns) {
-      console.log('[AB ext] Summary columns:', trackData.columns.map(c => `"${bareCaption(c.caption)}"`).join(', '));
-    }
-
-    const testNames = new Set();
-    for (const r of trackRows) {
-      const tn = r['Test Name']?.val || r['Test Name']?.fmt || '';
-      if (tn) testNames.add(tn);
-    }
-    console.log(`[AB ext] Distinct test names: ${[...testNames].join(', ') || '(none)'}`);
-
-    if (testNames.size !== 1) {
-      // No specific test selected (0 or multiple tests visible) → empty state
-      STATE.status = 'empty'; STATE.selectedTest = null; STATE.data = null;
+    if (!data || data.data.length === 0) {
+      showState('st-empty');
       return;
     }
 
-    const testName = [...testNames][0];
-    STATE.selectedTest = testName;
-    STATE.status = 'loading';
-    STATE.activeTab = 0;
-    render();
+    const result = parseData(data);
 
-    // ── Step 2: metric values from final_ab_dashboard underlying table ────
-    // Wide-format: one row per (param_name, param_value, os_platform) with
-    // # of users, Start2Purch, ARPS, ARPU. Filtered by the active action.
-    // P-values are NOT read — computed via z-tests in processRawData.
-    const metricsMap = await fetchMetricsData(trackWs);
-
-    // ── Step 3: enrich summary rows with metric values ────────────────────
-    const enrichedRows = trackRows.map(r => {
-      const pn  = r['Param Name']?.val || r['Param Name']?.fmt || '';
-      const pv  = r['Param Value']?.val || r['Param Value']?.fmt || '';
-      const os  = r['Os Platform']?.val || r['Os Platform']?.fmt || '';
-      const m   = metricsMap[`${pn}|${pv}|${os}`] || {};
-      const row = { ...r };
-
-      // User count: prefer final_ab_dashboard; fall back to "# of users for monitoring"
-      if (m.users != null) {
-        row['# of users'] = { raw: m.users, fmt: String(m.users), val: m.users };
-      } else if (!row['# of users'] && row['# of users for monitoring']) {
-        row['# of users'] = row['# of users for monitoring'];
-      }
-
-      if (m.start2purch != null)
-        row['Start2Purch'] = { raw: m.start2purch, fmt: String(m.start2purch), val: m.start2purch };
-      if (m.arps != null)
-        row['ARPS'] = { raw: m.arps, fmt: String(m.arps), val: m.arps };
-      if (m.arpu != null)
-        row['ARPU'] = { raw: m.arpu, fmt: String(m.arpu), val: m.arpu };
-
-      return row;
-    });
-
-    // ── Step 4: build variant model; p-values via z-tests ────────────────
-    const result = processRawData(testName, enrichedRows, [], {});
-
-    if (!result || result.paramNames.length === 0) {
-      STATE.status = 'empty'; STATE.data = null;
-    } else {
-      STATE.data = result; STATE.status = 'data';
+    if (!result) {
+      showState('st-empty');
+      return;
     }
+
+    render(result);
 
   } catch (err) {
-    console.error('[AB ext] loadData error:', err);
-    STATE.status = 'error';
-    STATE.error = err?.message || 'Unexpected error';
+    console.error('[AB Metrics]', err);
+    showError(err.message || String(err));
   } finally {
     _loading = false;
-    render();
   }
 }
 
-// ──────────────────────────────────────────────────────────
-//  Boot
-// ──────────────────────────────────────────────────────────
-async function init() {
-  const dashboard = tableau.extensions.dashboardContent.dashboard;
-  console.log('[AB ext] Worksheets:', dashboard.worksheets.map(w => w.name).join(', '));
-
-  // Attach FilterChanged to every sheet on the dashboard that receives the
-  // action filter. The action targets the whole "AB Test Monitoring" dashboard,
-  // so sheets like Split, Countries, Distribution fire reliably. We cannot
-  // rely solely on Timeline Tracking because it is the source of the action
-  // and Tableau may not raise FilterChanged on the source sheet for its own
-  // action. Listening to all non-excluded sheets is the safest approach.
-  const EXCLUDED_FROM_ACTION = new Set([
-    'Active Experiments',
-    'Active experiments by platform',
-    'Latest Experiment Launches',
-    'Recently Stopped Experiments',
-  ]);
-  let attached = 0;
-  for (const ws of dashboard.worksheets) {
-    if (!EXCLUDED_FROM_ACTION.has(ws.name)) {
-      ws.addEventListener(tableau.TableauEventType.FilterChanged, scheduleLoad);
-      attached++;
+/* ─────────────────────────────────────────────────────────────────
+   INIT
+   ───────────────────────────────────────────────────────────────── */
+window.initExtension = function () {
+  const timeout = setTimeout(() => {
+    if (document.getElementById('st-loading').classList.contains('active')) {
+      showError('Initialization timed out.\nMake sure the extension is running inside Tableau.');
     }
-  }
-  console.log(`[AB ext] FilterChanged attached to ${attached} worksheet(s)`);
+  }, 12000);
 
-  loadData();
-}
-
-// ── Entry point ──────────────────────────────────────────
-render();
-
-function startExtension() {
   tableau.extensions.initializeAsync().then(() => {
-    init();
+    clearTimeout(timeout);
+    loadData();
+
+    // Re-load on any filter or mark change — captures Timeline Tracking action filter
+    tableau.extensions.dashboardContent.dashboard.worksheets.forEach(ws => {
+      ws.addEventListener(tableau.TableauEventType.FilterChanged,
+        () => { if (!_loading) loadData(); });
+      ws.addEventListener(tableau.TableauEventType.MarkSelectionChanged,
+        () => { if (!_loading) loadData(); });
+    });
+
   }).catch(err => {
-    console.error('[AB ext] initializeAsync failed:', err);
-    STATE.status = 'error';
-    STATE.error = 'Initialization failed: ' + (err?.message || err);
-    render();
+    clearTimeout(timeout);
+    showError('Init failed: ' + (err.message || err));
   });
-}
+};
 
 if (typeof tableau !== 'undefined' && tableau.extensions) {
-  startExtension();
+  window.initExtension();
 } else {
   window.addEventListener('load', () => {
-    if (typeof tableau !== 'undefined' && tableau.extensions) {
-      startExtension();
-    } else {
-      STATE.status = 'error';
-      STATE.error = 'Tableau Extensions API not loaded.\nEnsure tableau.extensions.1.latest.js is in the same folder as index.html.';
-      render();
-    }
+    if (typeof tableau !== 'undefined') window.initExtension();
+    else showError(
+      'Tableau Extensions API not loaded.\n' +
+      'Ensure tableau.extensions.1.latest.js is in the same folder as index.html.'
+    );
   });
 }
 </script>
