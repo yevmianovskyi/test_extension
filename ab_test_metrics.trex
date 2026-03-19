@@ -1,0 +1,27 @@
+<?xml version='1.0' encoding='utf-8' ?>
+<manifest manifest-version='0.1' xmlns='http://www.tableau.com/xml/extension_manifest'>
+  <dashboard-extension id='com.promova.ab-test-quick-metrics' extension-version='1.0.0'>
+    <default-locale>en_US</default-locale>
+    <name resource-id='name'>AB Test Quick Metrics</name>
+    <description resource-id='description'>Quick view of key metrics and statistical significance for the selected A/B experiment</description>
+    <author name='Promova' email='analytics@promova.com' organization='Promova' website='https://promova.com' />
+    <min-api-version>1.4</min-api-version>
+    <source-location>
+      <!-- GitHub Pages (production) -->
+      <url>https://yevmianovskyi.github.io/test_extension/index.html</url>
+      <!-- Local dev: python3 -m http.server 8765 → http://localhost:8765/index.html -->
+    </source-location>
+    <icon>iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAABhGlDQ1BJQ0MgcHJvZmlsZQAAKJF9kT1Iw0AYht+mSkUqDnYQcchQnSyIijhKFYtgobQVWnUwufRHaNKQpLg4Cq4FB38Wqw4uzro6uAqC4A+Im4OToouU+F1SaBHjwXEP733vy30HCPUy06yOcUDTbTOViIuZ1aoYekUQEQQxIiozS5slKQHf8XUPAB/3MZ7lv+/P0ZPNWwwIiMQzmGXaxOvE05u2wXmfWGRlWSU+Jx4z6YLEj1xXPH7jXHRZ4JmikU7NE4vEYqGDlQ5mZVMjniKOq5pO+ULGc5XzFmetXGute/IXhnP60hLXaQ0jgQUsQoIIBRWUsAIbMVp1UiykaD/u4x90/RK5FHJVwMixgDI0yK4f/A9+z9bKT094SeE40PliOB8jwCEgWKvL38eHU3sBAOYBuNI6fqMCjHySnulosSNgeBu4uO5oyh5wuQMMPRmyKbtSkJaQzwPvZ3RNBRi6BXrW3t7a+zh9ALLUq+UNcHAIjBYoe93n3aHOuf17pvXrB2hkcpNiAAABhGlDQ1BJQ0MgcHJvZmlsZQAAKJF9kT1Iw0AYht+mSkUqDnYQcchQnSyIijhKFYtgobQVWnUwufRHaNKQpLg4Cq4FB38Wqw4uzro6uAqC4A+Im4OToouU+F1SaBHjwXEP733vy30HCPUy06yOcUDTbTOViIuZ1aoYekUQEQQxIiozS5slKQHf8XUPAB/3MZ7lv+/P0ZPNWwwIiMQzmGXaxOvE05u2wXmfWGRlWSU+Jx4z6YLEj1xXPH7jXHRZ4JmikU7NE4vEYqGDlQ5mZVMjniKOq5pO+ULGc5XzFmetXGude/IXhnP60hLXaQ0jgQUsQoIIBRWUsAIbMVp1UiykaD/u4x90/RK5FHJVwMixgDI0yK4f/A9+z9bKT094SeE40PliOB8jwCGgWKvL38eHU3sBAOYBuNI6fqMCjHySnulosSNgeBu4uO5oyh5wuQMMPRmyKbtSkJaQzwPvZ3RNBRi6BXrW3t7a+zh9ALLUq+UNcHAIjBYoe93n3aHOuf17pvXrB2hkcpNiAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAB3RJTUUH6AMTDDMXJYo5tgAAABl0RVh0Q29tbWVudABDcmVhdGVkIHdpdGggR0lNUFeBDhcAAAANSURBVBjTYmAYBQAAABIAAROolEIAAAAASUVORK5CYII=</icon>
+    <permissions>
+      <permission>full data</permission>
+    </permissions>
+  </dashboard-extension>
+  <resources>
+    <resource id='name'>
+      <text locale='en_US'>AB Test Quick Metrics</text>
+    </resource>
+    <resource id='description'>
+      <text locale='en_US'>Quick view of key metrics and statistical significance for the selected A/B experiment. Responds to the Timeline Tracking action filter.</text>
+    </resource>
+  </resources>
+</manifest>
