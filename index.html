@@ -1251,41 +1251,41 @@ async function loadData() {
       throw new Error(`Worksheet "${TIMELINE_WS}" not found.\nAvailable: ${dash.worksheets.map(w=>w.name).join(', ')}`);
     }
 
-    // ── Step 1: summary data from Timeline Tracking ──────────────────────
-    // Returns one row per (Test Name, Param Name, Param Value, Os Platform)
-    // filtered to the currently selected test via the action filter.
+    // ── Step 1: detect selected test ─────────────────────────────────────
+    // Timeline Tracking is a target of its own action filter, so
+    // getSummaryDataAsync reflects the active filter once it fires.
+    // Count distinct Test Names: exactly 1 = a specific test is selected.
     const trackData = await safeGetSummary(trackWs);
+    const trackRows = trackData ? parseTableRows(trackData) : [];
 
-    console.log(`[AB ext] Timeline Tracking rows: ${trackData?.data?.length ?? 'null'}`);
+    console.log(`[AB ext] Timeline Tracking rows: ${trackRows.length}`);
     if (trackData?.columns) {
       console.log('[AB ext] Summary columns:', trackData.columns.map(c => `"${bareCaption(c.caption)}"`).join(', '));
     }
 
-    if (!trackData || trackData.data.length === 0) {
-      if (!STATE.data) {
-        STATE.status = 'empty'; STATE.selectedTest = null; STATE.data = null;
-      }
-      _loading = false; render(); return;
+    const testNames = new Set();
+    for (const r of trackRows) {
+      const tn = r['Test Name']?.val || r['Test Name']?.fmt || '';
+      if (tn) testNames.add(tn);
+    }
+    console.log(`[AB ext] Distinct test names: ${[...testNames].join(', ') || '(none)'}`);
+
+    if (testNames.size !== 1) {
+      // No specific test selected (0 or multiple tests visible) → empty state
+      STATE.status = 'empty'; STATE.selectedTest = null; STATE.data = null;
+      return;
     }
 
-    const trackRows = parseTableRows(trackData);
-
-    // Test Name is a dimension in Timeline Tracking rows
-    const testName = trackRows[0]?.['Test Name']?.val || trackRows[0]?.['Test Name']?.fmt
-                  || trackRows[0]?.['Param Name']?.val  || trackRows[0]?.['Param Name']?.fmt
-                  || STATE.selectedTest || 'Selected Test';
-
-    console.log(`[AB ext] Test: "${testName}", rows: ${trackRows.length}`);
-
+    const testName = [...testNames][0];
     STATE.selectedTest = testName;
     STATE.status = 'loading';
     STATE.activeTab = 0;
     render();
 
     // ── Step 2: metric values from final_ab_dashboard underlying table ────
-    // Wide-format table: one row per variant with # of users, Start2Purch,
-    // ARPS, ARPU columns. Filtered by the active action filter.
-    // P-values are NOT read — all significance is computed via z-tests below.
+    // Wide-format: one row per (param_name, param_value, os_platform) with
+    // # of users, Start2Purch, ARPS, ARPU. Filtered by the active action.
+    // P-values are NOT read — computed via z-tests in processRawData.
     const metricsMap = await fetchMetricsData(trackWs);
 
     // ── Step 3: enrich summary rows with metric values ────────────────────
@@ -1326,10 +1326,10 @@ async function loadData() {
     console.error('[AB ext] loadData error:', err);
     STATE.status = 'error';
     STATE.error = err?.message || 'Unexpected error';
+  } finally {
+    _loading = false;
+    render();
   }
-
-  _loading = false;
-  render();
 }
 
 // ──────────────────────────────────────────────────────────
@@ -1339,17 +1339,26 @@ async function init() {
   const dashboard = tableau.extensions.dashboardContent.dashboard;
   console.log('[AB ext] Worksheets:', dashboard.worksheets.map(w => w.name).join(', '));
 
-  // FilterChanged only — MarkSelectionChanged is intentionally omitted.
-  // The action filter on Timeline Tracking has auto-clear:true, which causes
-  // MarkSelectionChanged to fire twice (once on select, once on auto-clear),
-  // producing a flicker to empty state. FilterChanged fires once after the
-  // filter settles, which is the stable signal we need.
-  const timelineWs = dashboard.worksheets.find(w => w.name === TIMELINE_WS);
-  if (timelineWs) {
-    timelineWs.addEventListener(tableau.TableauEventType.FilterChanged, scheduleLoad);
-  } else {
-    console.warn(`[AB ext] "${TIMELINE_WS}" not found — no event listener attached`);
+  // Attach FilterChanged to every sheet on the dashboard that receives the
+  // action filter. The action targets the whole "AB Test Monitoring" dashboard,
+  // so sheets like Split, Countries, Distribution fire reliably. We cannot
+  // rely solely on Timeline Tracking because it is the source of the action
+  // and Tableau may not raise FilterChanged on the source sheet for its own
+  // action. Listening to all non-excluded sheets is the safest approach.
+  const EXCLUDED_FROM_ACTION = new Set([
+    'Active Experiments',
+    'Active experiments by platform',
+    'Latest Experiment Launches',
+    'Recently Stopped Experiments',
+  ]);
+  let attached = 0;
+  for (const ws of dashboard.worksheets) {
+    if (!EXCLUDED_FROM_ACTION.has(ws.name)) {
+      ws.addEventListener(tableau.TableauEventType.FilterChanged, scheduleLoad);
+      attached++;
+    }
   }
+  console.log(`[AB ext] FilterChanged attached to ${attached} worksheet(s)`);
 
   loadData();
 }
