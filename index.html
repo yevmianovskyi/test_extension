@@ -370,8 +370,6 @@
 // ──────────────────────────────────────────────────────────
 //  Constants
 // ──────────────────────────────────────────────────────────
-const TRACKING_WS     = 'Tracking';
-const FUNNELS_WS      = 'Funnels Metrics';
 const TIMELINE_WS     = 'Timeline Tracking';
 const MIN_SAMPLE_SIZE = 200;
 const P_SIG  = 0.05;
@@ -1163,7 +1161,7 @@ async function safeGetSummary(worksheet) {
 }
 
 async function fetchPValueData(dashboard) {
-  const ws = dashboard.worksheets.find(w => w.name === TRACKING_WS);
+  const ws = dashboard.worksheets.find(w => w.name === TIMELINE_WS);
   if (!ws) return {};
   try {
     const tables = await ws.getUnderlyingTablesAsync();
@@ -1191,11 +1189,10 @@ async function loadData() {
 
   try {
     const dash     = tableau.extensions.dashboardContent.dashboard;
-    const trackWs  = dash.worksheets.find(w => w.name === TRACKING_WS);
-    const funnelWs = dash.worksheets.find(w => w.name === FUNNELS_WS);
+    const trackWs  = dash.worksheets.find(w => w.name === TIMELINE_WS);
 
     if (!trackWs) {
-      throw new Error(`Worksheet "${TRACKING_WS}" not found.\nAvailable: ${dash.worksheets.map(w=>w.name).join(', ')}`);
+      throw new Error(`Worksheet "${TIMELINE_WS}" not found.\nAvailable: ${dash.worksheets.map(w=>w.name).join(', ')}`);
     }
 
     const trackData = await safeGetSummary(trackWs);
@@ -1223,13 +1220,8 @@ async function loadData() {
     STATE.activeTab = 0;
     render();
 
-    const [funnelData, pvalMap] = await Promise.all([
-      funnelWs ? safeGetSummary(funnelWs) : Promise.resolve(null),
-      fetchPValueData(dash),
-    ]);
-
-    const funnelRows = parseTableRows(funnelData);
-    const result     = processRawData(testName, trackRows, funnelRows, pvalMap);
+    const pvalMap    = await fetchPValueData(dash);
+    const result     = processRawData(testName, trackRows, [], pvalMap);
 
     if (!result || result.paramNames.length === 0) {
       STATE.status = 'empty'; STATE.data = null;
@@ -1254,10 +1246,11 @@ async function init() {
   const dashboard = tableau.extensions.dashboardContent.dashboard;
   console.log('[AB ext] Worksheets:', dashboard.worksheets.map(w => w.name).join(', '));
 
-  dashboard.worksheets.forEach(ws => {
-    ws.addEventListener(tableau.TableauEventType.FilterChanged,        () => { if (!_loading) loadData(); });
-    ws.addEventListener(tableau.TableauEventType.MarkSelectionChanged, () => { if (!_loading) loadData(); });
-  });
+  const timelineWs = dashboard.worksheets.find(w => w.name === TIMELINE_WS);
+  if (timelineWs) {
+    timelineWs.addEventListener(tableau.TableauEventType.FilterChanged,        () => { if (!_loading) loadData(); });
+    timelineWs.addEventListener(tableau.TableauEventType.MarkSelectionChanged, () => { if (!_loading) loadData(); });
+  }
 
   loadData();
 }
