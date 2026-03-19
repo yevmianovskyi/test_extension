@@ -241,15 +241,30 @@ const Stats = {
 
 /* ─────────────────────────────────────────────────────────────────
    COLUMN LOOKUP
-   Tableau wraps aggregated measures in AGG(...) — strip it.
+   Tableau may wrap measures in AGG(...) and sometimes returns an
+   empty caption — fall back to fieldName in that case.
    ───────────────────────────────────────────────────────────────── */
-function bare(caption) {
-  return (caption || '').trim().replace(/^AGG\(\s*|\s*\)$/gi, '').trim();
+function bare(s) {
+  return (s || '').trim()
+    .replace(/^(ATTR|AGG|MIN|MAX|SUM|COUNT|COUNTD|AVG|MEDIAN)\s*\(\s*/i, '')
+    .replace(/\s*\)$/, '')
+    .replace(/^\[|\]$/g, '')
+    .trim();
+}
+
+function canonicalName(col) {
+  const cap = bare(col.caption || '');
+  if (cap) return cap;
+  // caption is empty → use fieldName (strip brackets / function wrappers)
+  return bare(col.fieldName || '');
 }
 
 function buildIndex(columns) {
   const idx = {};
-  columns.forEach((col, i) => { idx[bare(col.caption)] = i; });
+  columns.forEach((col, i) => {
+    const name = canonicalName(col);
+    if (name) idx[name] = i;
+  });
   return idx;
 }
 
@@ -298,7 +313,7 @@ function parseData(data) {
   const rows = data.data;
 
   console.log('[AB Metrics] Columns (' + cols.length + '):\n' +
-    cols.map((c, i) => `  [${i}] "${bare(c.caption)}"`).join('\n'));
+    cols.map((c, i) => `  [${i}] cap="${bare(c.caption)}" fn="${c.fieldName}" → "${canonicalName(c)}"`).join('\n'));
 
   const idx = buildIndex(cols);
 
@@ -494,7 +509,7 @@ async function loadData() {
 
     const data = await ws.getSummaryDataAsync({
       maxRows: 0,
-      ignoreAliases: false,
+      ignoreAliases: true,      // true = raw values; avoids empty-caption quirk
       ignoreSelection: false,   // respect Timeline Tracking action filter
       includeAllColumns: true,
     });
