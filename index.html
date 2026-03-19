@@ -1182,6 +1182,12 @@ async function fetchPValueData(dashboard) {
 //  Main data load
 // ──────────────────────────────────────────────────────────
 let _loading = false;
+let _loadDebounce = null;
+
+function scheduleLoad() {
+  clearTimeout(_loadDebounce);
+  _loadDebounce = setTimeout(() => { if (!_loading) loadData(); }, 200);
+}
 
 async function loadData() {
   if (_loading) return;
@@ -1203,7 +1209,12 @@ async function loadData() {
     }
 
     if (!trackData || trackData.data.length === 0) {
-      STATE.status = 'empty'; STATE.selectedTest = null; STATE.data = null;
+      // Only go to empty state on first load; retain last result if data
+      // already exists (avoids flickering when the action filter briefly
+      // clears the source marks and fires a second MarkSelectionChanged).
+      if (!STATE.data) {
+        STATE.status = 'empty'; STATE.selectedTest = null; STATE.data = null;
+      }
       _loading = false; render(); return;
     }
 
@@ -1248,8 +1259,8 @@ async function init() {
 
   const timelineWs = dashboard.worksheets.find(w => w.name === TIMELINE_WS);
   if (timelineWs) {
-    timelineWs.addEventListener(tableau.TableauEventType.FilterChanged,        () => { if (!_loading) loadData(); });
-    timelineWs.addEventListener(tableau.TableauEventType.MarkSelectionChanged, () => { if (!_loading) loadData(); });
+    timelineWs.addEventListener(tableau.TableauEventType.FilterChanged,        scheduleLoad);
+    timelineWs.addEventListener(tableau.TableauEventType.MarkSelectionChanged, scheduleLoad);
   }
 
   loadData();
