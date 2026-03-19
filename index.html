@@ -371,7 +371,6 @@
 //  Constants
 // ──────────────────────────────────────────────────────────
 const TIMELINE_WS = 'Timeline Tracking';
-const SPLIT_WS    = 'Split';
 const MIN_SAMPLE_SIZE = 200;
 const P_SIG  = 0.05;
 const P_BORD = 0.10;
@@ -831,11 +830,57 @@ function escHtml(s) {
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
-// ──────────────────────────────────────────────────────────
-//  (p-values come from ab_dashboard_stats — no local z-tests needed)
-// ──────────────────────────────────────────────────────────
+function findColIdx(columns, names) {
+  for (const name of names) {
+    const idx = columns.findIndex(c =>
+      c.fieldName === name ||
+      (c.fieldName || '').toLowerCase().replace(/[\s_-]/g,'') ===
+        name.toLowerCase().replace(/[\s_-]/g,'')
+    );
+    if (idx !== -1) return idx;
+  }
+  return -1;
+}
 
+// ──────────────────────────────────────────────────────────
+//  Statistical helpers  (2-proportion z-test + ARPU/ARPS)
+// ──────────────────────────────────────────────────────────
+function normalCDF(z) {
+  const a1=0.319381530, a2=-0.356563782, a3=1.781477937, a4=-1.821255978, a5=1.330274429;
+  const t = 1 / (1 + 0.2316419 * Math.abs(z));
+  const poly = t*(a1+t*(a2+t*(a3+t*(a4+t*a5))));
+  const pdf  = Math.exp(-z*z/2) / Math.sqrt(2*Math.PI);
+  const cdf  = 1 - pdf * poly;
+  return z >= 0 ? cdf : 1 - cdf;
+}
+function zTestProp(p1, n1, p2, n2) {
+  if (!p1||!p2||!n1||!n2||n1<10||n2<10) return null;
+  const pp = (p1*n1 + p2*n2) / (n1+n2);
+  const se = Math.sqrt(pp*(1-pp)*(1/n1+1/n2));
+  if (se === 0) return 1;
+  const z = Math.abs((p1-p2)/se);
+  return 2*(1-normalCDF(z));
+}
 // ARPU z-test: Var(ARPU) ≈ ARPS² × p × (1−p)  (point-mass revenue model)
+function zTestArpu(arpu_c, n_c, arpu_t, n_t, s2p_c, s2p_t, arps_c, arps_t) {
+  if (!n_c||!n_t||n_c<20||n_t<20) return null;
+  if (!arps_c||!arps_t||!s2p_c||!s2p_t) return null;
+  const var_c = arps_c*arps_c * s2p_c*(1-s2p_c);
+  const var_t = arps_t*arps_t * s2p_t*(1-s2p_t);
+  const se = Math.sqrt(var_c/n_c + var_t/n_t);
+  if (!se) return null;
+  return 2*(1-normalCDF(Math.abs((arpu_t-arpu_c)/se)));
+}
+// ARPS z-test: CV≈1 approximation
+function zTestArps(arps_c, nsubs_c, arps_t, nsubs_t) {
+  if (!nsubs_c||!nsubs_t||nsubs_c<10||nsubs_t<10) return null;
+  const se = Math.sqrt(arps_c*arps_c/nsubs_c + arps_t*arps_t/nsubs_t);
+  if (!se) return null;
+  return 2*(1-normalCDF(Math.abs((arps_t-arps_c)/se)));
+}
+
+// ──────────────────────────────────────────────────────────
+//  Power analysis — required sample size at α=0.05, 80% power
 // ──────────────────────────────────────────────────────────
 //  Power analysis — required sample size at α=0.05, 80% power
 //  Formula: n = (z_α/2 + z_β)² × (σ_c² + σ_t²) / Δ²
@@ -914,9 +959,7 @@ function parseTableRows(tableData) {
 // ──────────────────────────────────────────────────────────
 //  Build processed data model
 // ──────────────────────────────────────────────────────────
-// processRawData: builds variant map from Split summary data (user counts)
-// and ab_dashboard_stats underlying data (metric values + pre-computed p-values).
-function processRawData(testName, splitRows, statsRows) {
+function processRawData(testName, trackRows, funnelRows, pvalMap) {
   const varMap = {};
 
   function ensureVariant(paramName, os, paramValue) {
@@ -926,51 +969,90 @@ function processRawData(testName, splitRows, statsRows) {
       varMap[paramName][key] = {
         paramValue, os, isControl: isControlVariant(paramValue),
         users: 0, start2purch: null, arps: null, arpu: null,
+        joinToFirstClick: null, joinToFunnelComplete: null,
         pvalues: {}
       };
     }
     return varMap[paramName][key];
   }
 
-  // ── User counts from Split worksheet (filtered by action filter) ──────────
-  for (const r of splitRows) {
+  for (const r of trackRows) {
     const pn = r['Param Name']?.val || r['Param Name']?.fmt || '';
     const pv = r['Param Value']?.val || r['Param Value']?.fmt || '';
     const os = r['Os Platform']?.val || r['Os Platform']?.fmt || '';
     if (!pn || !pv) continue;
+
     const v = ensureVariant(pn, os, pv);
-    v.users = parseFloat(r['# of users']?.raw ?? r['# of users']?.fmt ?? 0) || 0;
+    v.users       = parseFloat(r['# of users']?.raw ?? r['# of users']?.fmt ?? 0) || 0;
+    v.start2purch = parseFloat(r['Start2Purch']?.raw) || null;
+    v.arps        = parseFloat(r['ARPS']?.raw) || null;
+    v.arpu        = parseFloat(r['ARPU']?.raw) || null;
   }
 
-  // ── Metric values + p-values from ab_dashboard_stats ─────────────────────
-  // Each row: (param_name, param_value, os_platform, metric, value, p_value)
-  for (const r of statsRows) {
-    // Column names differ slightly in joined vs raw table — try both forms
-    const pn = r['Param Name']?.val || r['Param Name']?.fmt
-            || r['Param Name (Ab Dashboard Stats)']?.val
-            || r['Param Name (Ab Dashboard Stats)']?.fmt || '';
-    const pv = r['Param Value']?.val || r['Param Value']?.fmt
-            || r['Param Value (Ab Dashboard Stats)']?.val
-            || r['Param Value (Ab Dashboard Stats)']?.fmt || '';
-    const os = r['Os Platform']?.val || r['Os Platform']?.fmt
-            || r['Os Platform (Ab Dashboard Stats)']?.val
-            || r['Os Platform (Ab Dashboard Stats)']?.fmt || '';
-    const metric = (r['Metric']?.val || r['Metric']?.fmt || '').toLowerCase().trim();
-    const val    = parseFloat(r['Value']?.raw ?? r['Value']?.fmt ?? NaN);
-    const pval   = parseFloat(r['P Value']?.raw ?? r['P Value']?.fmt ?? NaN);
+  for (const r of funnelRows) {
+    const pn = r['Param Name']?.val || r['Param Name']?.fmt || '';
+    const pv = r['Param Value']?.val || r['Param Value']?.fmt || '';
+    const os = r['Os Platform']?.val || r['Os Platfrom for filtering Web']?.val || r['Os Platform']?.fmt || '';
+    if (!pn || !pv) continue;
 
-    if (!pn || !pv || !metric) continue;
     const v = ensureVariant(pn, os, pv);
+    v.joinToFirstClick     = parseFloat(r['Joined Test to First Click']?.raw) || null;
+    v.joinToFunnelComplete = parseFloat(r['Joined Test to Funnel Completed']?.raw) || null;
+    if (!v.users) {
+      v.users = parseFloat(
+        r['# of users (funnels)']?.raw ??
+        r['# of users']?.raw ??
+        r['# of users (funnels)']?.fmt ??
+        r['# of users']?.fmt ?? 0
+      ) || 0;
+    }
+  }
 
-    if (metric === 'start_to_purch') {
-      if (!isNaN(val))  v.start2purch            = val;
-      if (!isNaN(pval)) v.pvalues.start_to_purch  = pval;
-    } else if (metric === 'arps') {
-      if (!isNaN(val))  v.arps        = val;
-      if (!isNaN(pval)) v.pvalues.arps = pval;
-    } else if (metric === 'arpu') {
-      if (!isNaN(val))  v.arpu        = val;
-      if (!isNaN(pval)) v.pvalues.arpu = pval;
+  // Attach pre-computed p-values from underlying table (if available)
+  for (const [pn, variants] of Object.entries(varMap)) {
+    for (const v of Object.values(variants)) {
+      const os = v.os, pv = v.paramValue;
+      const getPV = m =>
+        pvalMap[`${m}|${pv}|${pn}|${os}`] || pvalMap[`${m}|${pv}|${pn}|`] ||
+        pvalMap[`${m}|${pv}||${os}`]       || pvalMap[`${m}|${pv}||`]       || null;
+      v.pvalues.start_to_purch      = getPV('start_to_purch');
+      v.pvalues.arpu                = getPV('arpu');
+      v.pvalues.arps                = getPV('arps');
+      v.pvalues.join2firstclick     = getPV('join2firstclick');
+      v.pvalues.join2funnelcomplete = getPV('join2funnelcomplete');
+    }
+  }
+
+  // Fallback: compute p-values via z-test when not available from datasource
+  for (const variants of Object.values(varMap)) {
+    const allCtrls = Object.values(variants).filter(v => v.isControl);
+    if (!allCtrls.length) continue;
+
+    for (const v of Object.values(variants)) {
+      if (v.isControl) continue;
+      const sameOsCtrl = allCtrls.find(c => c.os === v.os) || allCtrls[0];
+
+      if (!v.pvalues.start_to_purch && sameOsCtrl.start2purch != null && v.start2purch != null)
+        v.pvalues.start_to_purch = zTestProp(sameOsCtrl.start2purch, sameOsCtrl.users, v.start2purch, v.users);
+
+      if (!v.pvalues.arpu && sameOsCtrl.arpu != null && v.arpu != null)
+        v.pvalues.arpu = zTestArpu(
+          sameOsCtrl.arpu, sameOsCtrl.users, v.arpu, v.users,
+          sameOsCtrl.start2purch, v.start2purch, sameOsCtrl.arps, v.arps
+        );
+
+      if (!v.pvalues.arps && sameOsCtrl.arps != null && v.arps != null) {
+        const ctrlSubs = sameOsCtrl.users && sameOsCtrl.start2purch ? Math.round(sameOsCtrl.users * sameOsCtrl.start2purch) : 0;
+        const testSubs = v.users && v.start2purch ? Math.round(v.users * v.start2purch) : 0;
+        v.pvalues.arps = zTestArps(sameOsCtrl.arps, ctrlSubs, v.arps, testSubs);
+      }
+
+      const webCtrl = allCtrls.find(c => c.joinToFirstClick != null) || sameOsCtrl;
+      if (!v.pvalues.join2firstclick && webCtrl.joinToFirstClick != null && v.joinToFirstClick != null)
+        v.pvalues.join2firstclick = zTestProp(webCtrl.joinToFirstClick, webCtrl.users, v.joinToFirstClick, v.users);
+      const webCtrl2 = allCtrls.find(c => c.joinToFunnelComplete != null) || sameOsCtrl;
+      if (!v.pvalues.join2funnelcomplete && webCtrl2.joinToFunnelComplete != null && v.joinToFunnelComplete != null)
+        v.pvalues.join2funnelcomplete = zTestProp(webCtrl2.joinToFunnelComplete, webCtrl2.users, v.joinToFunnelComplete, v.users);
     }
   }
 
@@ -983,10 +1065,10 @@ function processRawData(testName, splitRows, statsRows) {
     for (const v of Object.values(variantsByKey)) {
       platforms.add(v.os);
       if (!byPV[v.paramValue]) {
-        byPV[v.paramValue] = { ...v, pvalues: { ...v.pvalues } };
+        byPV[v.paramValue] = { ...v };
       } else {
         byPV[v.paramValue].users += v.users || 0;
-        for (const k of ['start2purch', 'arps', 'arpu']) {
+        for (const k of ['start2purch','arps','arpu','joinToFirstClick','joinToFunnelComplete']) {
           if (byPV[v.paramValue][k] == null) byPV[v.paramValue][k] = v[k];
         }
         for (const k of Object.keys(v.pvalues)) {
@@ -997,57 +1079,73 @@ function processRawData(testName, splitRows, statsRows) {
         }
       }
     }
-    result.variants[pn] = Object.values(byPV).sort((a, b) => a.isControl ? -1 : 1);
+    result.variants[pn] = Object.values(byPV).sort((a,b) => a.isControl ? -1 : 1);
+  }
+
+  // Post-dedup fallback for web funnel metrics
+  for (const variants of Object.values(result.variants)) {
+    const ctrl = variants.find(v => v.isControl);
+    if (!ctrl) continue;
+    for (const tv of variants) {
+      if (tv.isControl) continue;
+      if (!tv.pvalues.join2firstclick && ctrl.joinToFirstClick != null && tv.joinToFirstClick != null)
+        tv.pvalues.join2firstclick = zTestProp(ctrl.joinToFirstClick, ctrl.users, tv.joinToFirstClick, tv.users);
+      if (!tv.pvalues.join2funnelcomplete && ctrl.joinToFunnelComplete != null && tv.joinToFunnelComplete != null)
+        tv.pvalues.join2funnelcomplete = zTestProp(ctrl.joinToFunnelComplete, ctrl.users, tv.joinToFunnelComplete, tv.users);
+    }
   }
 
   return result;
 }
 
 // ──────────────────────────────────────────────────────────
-//  Fetch metric values + p-values from ab_dashboard_stats
-//  (underlying table, filtered by the active action filter)
+//  P-value extraction from underlying table data
 // ──────────────────────────────────────────────────────────
-async function fetchStatsData(worksheet) {
-  try {
-    const tables = await worksheet.getUnderlyingTablesAsync();
+function extractPValues(tableData) {
+  const pvalMap = {};
+  if (!tableData?.columns || !tableData?.data) return pvalMap;
 
-    // First pass: find table by name/caption
-    let target = tables.find(t =>
-      (t.caption || '').toLowerCase().includes('ab_dashboard_stats') ||
-      (t.id     || '').toLowerCase().includes('ab_dashboard_stats')
-    );
+  const cols        = tableData.columns;
+  const metricIdx   = findColIdx(cols, ['Metric','metric']);
+  const pValIdx     = findColIdx(cols, ['P Value','p_value','P-value CR','P-value ARPU']);
+  const paramValIdx = findColIdx(cols, ['Param Value','param_value']);
+  const paramNmIdx  = findColIdx(cols, ['Param Name','param_name']);
+  const osIdx       = findColIdx(cols, ['Os Platform','os_platform']);
 
-    // Second pass: probe by column signature (metric + p_value columns)
-    if (!target) {
-      for (const t of tables) {
-        const probe = await worksheet.getUnderlyingTableDataAsync(t.id, {
-          maxRows: 1, ignoreAliases: false, ignoreSelection: false
-        });
-        if (!probe?.columns) continue;
-        const captions = probe.columns.map(c =>
-          bareCaption(c.caption || c.fieldName).toLowerCase()
-        );
-        if (captions.includes('metric') &&
-            captions.some(c => c.includes('p value') || c === 'p_value' || c === 'p value')) {
-          target = t; break;
-        }
-      }
-    }
+  if (pValIdx === -1) return pvalMap;
 
-    if (!target) {
-      console.warn('[AB ext] fetchStatsData: ab_dashboard_stats table not found');
-      return [];
-    }
+  for (const row of tableData.data) {
+    const metric = row[metricIdx]?.val ?? row[metricIdx]?.value ?? null;
+    const pValRaw = row[pValIdx];
+    const pVal = pValRaw?.nativeValue ?? parseFloat(pValRaw?.formattedValue ?? 'NaN');
+    if (!metric || isNaN(pVal) || pVal >= 10) continue;
 
-    const data = await worksheet.getUnderlyingTableDataAsync(target.id, {
-      maxRows: 50000, ignoreAliases: false, ignoreSelection: false
-    });
-    console.log(`[AB ext] fetchStatsData: ${data?.data?.length ?? 0} rows from "${target.caption || target.id}"`);
-    return parseTableRows(data);
-  } catch (e) {
-    console.warn('[AB ext] fetchStatsData failed:', e);
-    return [];
+    const pv = paramValIdx >= 0 ? (row[paramValIdx]?.val ?? '') : '';
+    const pn = paramNmIdx  >= 0 ? (row[paramNmIdx]?.val  ?? '') : '';
+    const os = osIdx       >= 0 ? (row[osIdx]?.val        ?? '') : '';
+
+    const key = `${metric}|${pv}|${pn}|${os}`;
+    if (!pvalMap[key] || pVal < pvalMap[key]) pvalMap[key] = pVal;
   }
+  return pvalMap;
+}
+
+async function fetchPValueData(dashboard) {
+  const ws = dashboard.worksheets.find(w => w.name === TIMELINE_WS);
+  if (!ws) return {};
+  try {
+    const tables = await ws.getUnderlyingTablesAsync();
+    for (const table of tables) {
+      const data = await ws.getUnderlyingTableDataAsync(table.id, {
+        maxRows: 50000, ignoreAliases: false, ignoreSelection: true
+      });
+      const pmap = extractPValues(data);
+      if (Object.keys(pmap).length > 0) return pmap;
+    }
+  } catch (e) {
+    console.warn('Could not read p_values from underlying data:', e);
+  }
+  return {};
 }
 
 // ──────────────────────────────────────────────────────────
@@ -1083,63 +1181,42 @@ async function loadData() {
   _loading = true;
 
   try {
-    const dash       = tableau.extensions.dashboardContent.dashboard;
-    const timelineWs = dash.worksheets.find(w => w.name === TIMELINE_WS);
-    const splitWs    = dash.worksheets.find(w => w.name === SPLIT_WS);
+    const dash    = tableau.extensions.dashboardContent.dashboard;
+    const trackWs = dash.worksheets.find(w => w.name === TIMELINE_WS);
 
-    if (!timelineWs) {
+    if (!trackWs) {
       throw new Error(`Worksheet "${TIMELINE_WS}" not found.\nAvailable: ${dash.worksheets.map(w=>w.name).join(', ')}`);
     }
 
-    // ── Step 1: detect selected test from Timeline Tracking ──────────────
-    // Timeline Tracking is a target of its own action filter, so
-    // getSummaryDataAsync with ignoreSelection:false reflects the active filter.
-    const timelineData = await safeGetSummary(timelineWs);
-    const timelineRows = timelineData ? parseTableRows(timelineData) : [];
+    const trackData = await safeGetSummary(trackWs);
 
-    console.log(`[AB ext] Timeline rows: ${timelineRows.length}`);
-    if (timelineData?.columns) {
-      console.log('[AB ext] Timeline columns:', timelineData.columns.map(c => `"${bareCaption(c.caption)}"`).join(', '));
+    console.log(`[AB ext] Timeline Tracking rows: ${trackData?.data?.length ?? 'null'}`);
+    if (trackData?.columns) {
+      console.log('[AB ext] Columns:', trackData.columns.map(c => `"${bareCaption(c.caption)}"`).join(', '));
     }
 
-    // Count distinct test_name values visible in Timeline Tracking
-    const testNames = new Set();
-    for (const r of timelineRows) {
-      const tn = r['Test Name']?.val || r['Test Name']?.fmt
-              || r['test_name']?.val  || r['test_name']?.fmt || '';
-      if (tn) testNames.add(tn);
-    }
-
-    console.log(`[AB ext] Distinct test names: ${[...testNames].join(', ') || '(none)'}`);
-
-    // Exactly 1 visible → a specific test is filtered in
-    if (testNames.size !== 1) {
+    if (!trackData || trackData.data.length === 0) {
       if (!STATE.data) {
         STATE.status = 'empty'; STATE.selectedTest = null; STATE.data = null;
       }
       _loading = false; render(); return;
     }
 
-    const testName = [...testNames][0];
+    const trackRows = parseTableRows(trackData);
+    const testName  = trackRows[0]?.['Param Name']?.val
+                   || trackRows[0]?.['Param Name']?.fmt
+                   || trackRows[0]?.['param_name']?.val
+                   || STATE.selectedTest || 'Selected Test';
 
-    // ── Step 2: show loading indicator ───────────────────────────────────
+    console.log(`[AB ext] Test: "${testName}", rows: ${trackRows.length}`);
+
     STATE.selectedTest = testName;
     STATE.status = 'loading';
     STATE.activeTab = 0;
     render();
 
-    // ── Step 3: fetch user counts (Split) + metrics (ab_dashboard_stats) ─
-    // Both calls use ignoreSelection:false so they respect the active filter.
-    const statsSource = splitWs || timelineWs;
-    const [splitSummary, statsRows] = await Promise.all([
-      splitWs ? safeGetSummary(splitWs) : Promise.resolve(null),
-      fetchStatsData(statsSource)
-    ]);
-
-    const splitRows = splitSummary ? parseTableRows(splitSummary) : [];
-    console.log(`[AB ext] Split rows: ${splitRows.length}, Stats rows: ${statsRows.length}`);
-
-    const result = processRawData(testName, splitRows, statsRows);
+    const pvalMap = await fetchPValueData(dash);
+    const result  = processRawData(testName, trackRows, [], pvalMap);
 
     if (!result || result.paramNames.length === 0) {
       STATE.status = 'empty'; STATE.data = null;
@@ -1164,9 +1241,11 @@ async function init() {
   const dashboard = tableau.extensions.dashboardContent.dashboard;
   console.log('[AB ext] Worksheets:', dashboard.worksheets.map(w => w.name).join(', '));
 
-  // Listen only to FilterChanged on Timeline Tracking.
-  // The action filter (auto-clear:true) fires FilterChanged once after it settles —
-  // no need for MarkSelectionChanged, which double-fires due to the auto-clear.
+  // FilterChanged only — MarkSelectionChanged is intentionally omitted.
+  // The action filter on Timeline Tracking has auto-clear:true, which causes
+  // MarkSelectionChanged to fire twice (once on select, once on auto-clear),
+  // producing a flicker to empty state. FilterChanged fires once after the
+  // filter settles, which is the stable signal we need.
   const timelineWs = dashboard.worksheets.find(w => w.name === TIMELINE_WS);
   if (timelineWs) {
     timelineWs.addEventListener(tableau.TableauEventType.FilterChanged, scheduleLoad);
